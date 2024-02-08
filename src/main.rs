@@ -109,7 +109,7 @@ impl SerialInterface {
             flow_control: FlowControl::FlowNone,
             port: None,
             silence: None,
-            timeout: Duration::from_nanos(1000), // FIXME: what policy for timeout here?
+            timeout: Duration::from_nanos(1000), // FIXME: what policy for init timeout here?
             receiver: None,
             sender: None,
         })
@@ -183,6 +183,7 @@ impl SerialInterface {
                 }
             }
             self.mode = m;
+            log::info!("SerialInterface::switch mode to {:?}", &self.mode);
             Ok(())
         } else {
             Err(SIError::StopToChangeSettings)
@@ -254,7 +255,6 @@ impl SerialInterface {
         silence: Option<&Duration>,
         timeout: Option<&Duration>,
     ) -> Result<Option<SerialMessage>, SIError> {
-        // TODO: implement use of Status::receipt after get first data byte
         self.clear_read_buffer()?;
         let mut buffer: Vec<u8> = Vec::new();
         let start = Instant::now();
@@ -399,6 +399,7 @@ impl SerialInterface {
     /// Try to send a message trough self.sender
     fn send_message(&mut self, msg: SerialMessage) -> Result<(), SIError> {
         if let Some(sender) = self.sender.take() {
+            log::info!("SerialInterface::Send {:?}", &msg);
             sender.send(msg).map_err(|_| SIError::CannotSendMessage)?;
             self.sender = Some(sender);
             Ok(())
@@ -414,6 +415,7 @@ impl SerialInterface {
     fn read_message(&mut self) -> Result<Option<SerialMessage>, SIError> {
         if let Some(receiver) = self.receiver.take() {
             if let Ok(message) = receiver.try_recv() {
+                log::info!("SerialInterface::Receive {:?}", &message);
                 // general case, message to handle in any situation
                 match &message {
                     SerialMessage::GetConnectionStatus => {
@@ -709,6 +711,7 @@ impl SerialInterface {
 
     /// Main loop
     pub fn run(&mut self) {
+        log::info!("SerialInterface::run()");
         loop {
             match &self.mode {
                 Mode::Stop => {
@@ -716,6 +719,7 @@ impl SerialInterface {
                     match result {
                         Ok(msg) => {
                             if let Some(SerialMessage::SetMode(mode)) = msg {
+                                log::info!("SerialInterface::switch mode to {:?}", &mode);
                                 self.mode = mode;
                             }
                         }
@@ -729,6 +733,7 @@ impl SerialInterface {
                     match result {
                         Ok(msg) => {
                             if let Some(Mode::Stop) = msg {
+                                log::info!("SerialInterface::switch mode to Mode::Stop");
                                 self.mode = Mode::Stop;
                             }
                         }
@@ -742,6 +747,7 @@ impl SerialInterface {
                     match result {
                         Ok(msg) => {
                             if let Some(Mode::Stop) = msg {
+                                log::info!("SerialInterface::switch mode to Mode::Stop");
                                 self.mode = Mode::Stop;
                             }
                         }
@@ -755,6 +761,7 @@ impl SerialInterface {
                     match result {
                         Ok(msg) => {
                             if let Some(Mode::Stop) = msg {
+                                log::info!("SerialInterface::switch mode to Mode::Stop");
                                 self.mode = Mode::Stop;
                             }
                         }
