@@ -1,6 +1,8 @@
+#![allow(dead_code)]
+
 use serial::{BaudRate, CharSize, FlowControl, Parity, SerialPort, StopBits, SystemPort};
 use serialport::available_ports;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -22,12 +24,17 @@ enum SerialInterfaceError {
     NoPortToClose,
     CannotSendMessage,
     WrongMode,
+    CannotWritePort,
+    StopModeBeforeChange,
+    WaitingForResponse,
 }
 
 #[derive(Debug, Clone)]
-enum State {
+enum Status {
     Read,
+    Receipt,
     Write,
+    WaitingResponse,
     None,
 }
 
@@ -50,6 +57,7 @@ enum SerialMessage {
     SetParity(Parity),
     SetStopBits(StopBits),
     SetFlowControl(FlowControl),
+    SetTimeout(Duration),
     Connect,
     Disconnect,
 
@@ -59,7 +67,9 @@ enum SerialMessage {
     Receive(Vec<u8>),
 
     // General messages (always handled)
-    ConnectionStatus,
+    GetStatus,
+    Status(Status),
+    GetConnectionStatus,
     Connected(bool),
     SetMode(Mode),
     Mode(Mode),
@@ -71,7 +81,7 @@ type SIError = SerialInterfaceError;
 struct SerialInterface {
     path: Option<String>,
     mode: Mode,
-    state: State,
+    status: Status,
     modbus_id: Option<u8>,
     baud_rate: BaudRate,
     char_size: CharSize,
@@ -80,6 +90,7 @@ struct SerialInterface {
     flow_control: FlowControl,
     port: Option<SystemPort>,
     silence: Option<Duration>,
+    timeout: Duration,
     receiver: Option<mpsc::Receiver<SerialMessage>>,
     sender: Option<mpsc::Sender<SerialMessage>>,
 }
@@ -89,7 +100,7 @@ impl SerialInterface {
         Ok(SerialInterface {
             path: None,
             mode: Mode::Stop,
-            state: State::None,
+            status: Status::None,
             modbus_id: None,
             baud_rate: BaudRate::Baud19200,
             char_size: CharSize::Bits8,
@@ -98,6 +109,7 @@ impl SerialInterface {
             flow_control: FlowControl::FlowNone,
             port: None,
             silence: None,
+            timeout: Duration::from_nanos(1000), // FIXME: what policy for timeout here?
             receiver: None,
             sender: None,
         })
@@ -181,11 +193,12 @@ impl SerialInterface {
         &self.mode
     }
 
-    pub fn get_state(&self) -> &State {
-        &self.state
+    pub fn get_state(&self) -> &Status {
+        &self.status
     }
 
     pub fn list_ports() -> Result<Vec<String>, SIError> {
+        // TODO: get rid of serialport crate dependency
         if let Ok(ports) = available_ports() {
             Ok(ports.iter().map(|p| p.port_name.clone()).collect())
         } else {
@@ -241,6 +254,7 @@ impl SerialInterface {
         silence: Option<&Duration>,
         timeout: Option<&Duration>,
     ) -> Result<Option<SerialMessage>, SIError> {
+        // TODO: implement use of Status::receipt after get first data byte
         self.clear_read_buffer()?;
         let mut buffer: Vec<u8> = Vec::new();
         let start = Instant::now();
@@ -251,7 +265,9 @@ impl SerialInterface {
         }
 
         loop {
-            if let Some(data) = self.read_byte()? {
+            let result = self.read_byte()?;
+            if let Some(data) = result {
+                self.status = Status::Receipt;
                 buffer.push(data);
                 // reset the silence counter
                 last_data = Instant::now();
@@ -259,9 +275,13 @@ impl SerialInterface {
                 // check for size reach
                 if let Some(size) = &size {
                     if &buffer.len() == size {
-                        // return Ok(Some(buffer));
-                        self.send_message(SerialMessage::Receive(buffer.clone()))?;
-                        return Ok(None);
+                        let result = self.send_message(SerialMessage::Receive(buffer.clone()));
+                        self.status = Status::None;
+                        return if let Err(e) = result {
+                            Err(e)
+                        } else {
+                            Ok(None)
+                        };
                     }
                 }
             } else if let Some(silence) = silence {
@@ -273,17 +293,27 @@ impl SerialInterface {
                     last_data = Instant::now();
                 }
                 // wait for silence
-                if &Instant::now().duration_since(last_data.clone()) > silence {
-                    self.send_message(SerialMessage::Receive(buffer.clone()))?;
-                    return Ok(None);
+                if &Instant::now().duration_since(last_data) > silence {
+                    let result = self.send_message(SerialMessage::Receive(buffer.clone()));
+                    self.status = Status::None;
+                    return if let Err(e) = result {
+                        Err(e)
+                    } else {
+                        Ok(None)
+                    };
                 }
             }
             // check timeout
             if let Some(timeout) = timeout {
                 if &Instant::now().duration_since(start) > timeout {
                     if !buffer.is_empty() {
-                        // return Ok(Some(buffer));
-                        self.send_message(SerialMessage::Receive(buffer.clone()))?;
+                        let result = self.send_message(SerialMessage::Receive(buffer.clone()));
+                        self.status = Status::None;
+                        return if let Err(e) = result {
+                            Err(e)
+                        } else {
+                            Ok(None)
+                        };
                     }
                     return Ok(None);
                 }
@@ -293,7 +323,7 @@ impl SerialInterface {
 
     /// Read <s> bytes of data, blocking until get the <s> number of bytes.
     fn read_size(&mut self, s: usize) -> Result<Option<SerialMessage>, SIError> {
-        Ok(self.read_until_size_or_silence_or_timeout_or_message(Some(s), None, None)?)
+        self.read_until_size_or_silence_or_timeout_or_message(Some(s), None, None)
     }
 
     /// Should be use to listen to a Request response in Master.
@@ -302,43 +332,35 @@ impl SerialInterface {
         size: usize,
         silence: &Duration,
     ) -> Result<Option<SerialMessage>, SIError> {
-        Ok(self.read_until_size_or_silence_or_timeout_or_message(
-            Some(size),
-            Some(silence),
-            None,
-        )?)
+        self.read_until_size_or_silence_or_timeout_or_message(Some(size), Some(silence), None)
     }
 
     /// Should be use to listen in Slave/Sniffing , when you don't know the size of the incoming Request.
     fn read_until_silence(&mut self, silence: &Duration) -> Result<Option<SerialMessage>, SIError> {
-        Ok(self.read_until_size_or_silence_or_timeout_or_message(None, Some(silence), None)?)
+        self.read_until_size_or_silence_or_timeout_or_message(None, Some(silence), None)
     }
 
-    fn read_until_size_or_timeout(
+    fn read_until_silence_or_timeout(
         &mut self,
-        size: usize,
+        silence: &Duration,
         timeout: &Duration,
     ) -> Result<Option<SerialMessage>, SIError> {
-        Ok(self.read_until_size_or_silence_or_timeout_or_message(
-            Some(size),
-            None,
-            Some(timeout),
-        )?)
+        self.read_until_size_or_silence_or_timeout_or_message(None, Some(silence), Some(timeout))
     }
 
     /// Load port settings
     fn set_port(&mut self) -> Result<(), SIError> {
         if let Some(mut port) = self.port.take() {
             port.reconfigure(&|settings| {
-                settings.set_baud_rate(self.baud_rate.clone())?;
-                settings.set_char_size(self.char_size.clone());
-                settings.set_parity(self.parity.clone());
-                settings.set_stop_bits(self.stop_bits.clone());
-                settings.set_flow_control(self.flow_control.clone());
-                self.port = Some(port);
+                settings.set_baud_rate(self.baud_rate)?;
+                settings.set_char_size(self.char_size);
+                settings.set_parity(self.parity);
+                settings.set_stop_bits(self.stop_bits);
+                settings.set_flow_control(self.flow_control);
                 Ok(())
             })
             .unwrap();
+            self.port = Some(port);
         }
         Ok(())
     }
@@ -357,8 +379,9 @@ impl SerialInterface {
             Err(SIError::PathMissing)
         } else {
             self.set_port()?;
-            self.port =
-                Some(serial::open(&self.path.unwrap()).map_err(|_| SIError::CannotOpenPort)?);
+            self.port = Some(
+                serial::open(&self.path.as_ref().unwrap()).map_err(|_| SIError::CannotOpenPort)?,
+            );
             Ok(())
         }
     }
@@ -384,24 +407,34 @@ impl SerialInterface {
         }
     }
 
-    /// Poll self.receiver channel and handle if there is one message. Return the message if t should be
-    /// handled externally.
+    /// Poll self.receiver channel and handle if there is one message. Return the message if it should be
+    /// handled externally. Two kind messages can be returned:
+    /// - SerialMessage::SetMode()
+    /// - SerialMessage::Send()
     fn read_message(&mut self) -> Result<Option<SerialMessage>, SIError> {
         if let Some(receiver) = self.receiver.take() {
             if let Ok(message) = receiver.try_recv() {
                 // general case, message to handle in any situation
                 match &message {
-                    SerialMessage::ConnectionStatus => {
-                        if let Some(port) = &self.port {
+                    SerialMessage::GetConnectionStatus => {
+                        if let Some(_port) = &self.port {
                             self.send_message(SerialMessage::Connected(true))?;
                         } else {
                             self.send_message(SerialMessage::Connected(false))?;
                         }
                         return Ok(None);
                     }
+                    SerialMessage::GetStatus => {
+                        self.send_message(SerialMessage::Status(self.status.clone()))?;
+                        return Ok(None);
+                    }
                     // If ask for change mode, we return message to caller in order it can handle it.
                     SerialMessage::SetMode(mode) => {
-                        return Ok(Some(SerialMessage::Mode(mode.clone())));
+                        return Ok(Some(SerialMessage::SetMode(mode.clone())));
+                    }
+                    SerialMessage::SetTimeout(timeout) => {
+                        self.timeout = *timeout;
+                        return Ok(None);
                     }
                     _ => {}
                 }
@@ -440,7 +473,7 @@ impl SerialInterface {
                             return Ok(None);
                         }
                         SerialMessage::Connect => {
-                            if let Err(e) = self.open() {
+                            if self.open().is_err() {
                                 self.send_message(SerialMessage::Connected(false))?;
                             } else {
                                 self.send_message(SerialMessage::Connected(true))?;
@@ -450,10 +483,8 @@ impl SerialInterface {
                         SerialMessage::Disconnect => {}
                         _ => {}
                     }
-                } else {
-                    if let SerialMessage::Send(data) = message {
-                        return Ok(Some(SerialMessage::Send(data)));
-                    }
+                } else if let SerialMessage::Send(data) = message {
+                    return Ok(Some(SerialMessage::Send(data)));
                 }
             }
             self.receiver = Some(receiver);
@@ -461,31 +492,278 @@ impl SerialInterface {
         Ok(None)
     }
 
-    /// Sniffing feature: listen on the line and send a Request on mpsc channel for every one received, for every
-    /// loop check if a request to send is arrived on mpsc channel.
-    pub fn listen(&mut self) -> Result<Option<Mode>, SIError> {
-        if &self.mode != &Mode::Sniff {
-            Err(SIError::WrongMode)
+    /// Write data to the serial line.
+    fn write(&mut self, data: Vec<u8>) -> Result<(), SIError> {
+        if let Some(mut port) = self.port.take() {
+            let buffer = &data[0..data.len()];
+            port.write(buffer).map_err(|_| SIError::CannotWritePort)?;
+            self.port = Some(port);
+            Ok(())
         } else {
-            while &self.mode == &Mode::Sniff {
-                if let Some(msg) = self.read_message()? {}
+            Err(SIError::PortNotOpened)
+        }
+    }
+
+    /// Sniffing feature: listen on serial line and send a SerialMessage::Receive() via mpsc channel for every serial
+    /// request received, for every loop iteration, check if a SerialMessage is arrived via mpsc channel.
+    /// If receive a SerialMessage::Send(), pause listen in order to send message then resume listening.
+    /// Stop listening if receive SerialMessage::SetMode(Stop). Almost SerialMessage are handled silently by self.read_message().
+    pub fn listen(&mut self) -> Result<Option<Mode>, SIError> {
+        loop {
+            if let Some(silence) = &self.silence.clone() {
+                self.status = Status::Read;
+                if let Some(msg) = self.read_until_silence(silence)? {
+                    match msg {
+                        SerialMessage::Send(data) => {
+                            self.status = Status::Write;
+                            let write = self.write(data);
+                            self.status = Status::None;
+                            if let Err(e) = write {
+                                self.send_message(SerialMessage::Error(e))?;
+                            }
+                        }
+                        SerialMessage::SetMode(mode) => {
+                            if mode != Mode::Stop && mode != Mode::Sniff {
+                                self.send_message(SerialMessage::Error(
+                                    SIError::StopModeBeforeChange,
+                                ))?;
+                            } else if let Mode::Stop = mode {
+                                self.status = Status::None;
+                                return Ok(Some(mode));
+                            }
+                        }
+                        _ => {}
+                    }
+                } else {
+                    self.status = Status::None;
+                    return Ok(None);
+                }
+            } else {
+                return Err(SIError::SilenceMissing);
             }
-            Ok(None)
         }
     }
 
     /// Master feature: write a request, then wait for response, when response received, stop listening.
-    pub fn write_read(&mut self) -> Result<(), SIError> {
-        //TODO
+    /// Returns early if receive SerialMessage::SetMode(Mode::Stop)). Does not accept SerialMessage::Send() as
+    /// we already waiting for a response. Almost SerialMessage are handled silently by self.read_message().
+    pub fn write_read(
+        &mut self,
+        data: Vec<u8>,
+        timeout: &Duration,
+    ) -> Result<Option<SerialMessage>, SIError> {
+        if let Some(silence) = &self.silence.clone() {
+            self.status = Status::Write;
+            if let Err(e) = self.write(data) {
+                self.status = Status::None;
+                return Err(e);
+            } else {
+                self.status = Status::WaitingResponse;
+            }
+
+            loop {
+                if let Some(msg) = self.read_until_silence_or_timeout(silence, timeout)? {
+                    match msg {
+                        SerialMessage::Send(_data) => {
+                            // we already waiting for response cannot send request now.
+                            self.send_message(SerialMessage::Error(SIError::WaitingForResponse))?;
+                            continue;
+                        }
+                        SerialMessage::SetMode(mode) => {
+                            if mode == Mode::Stop {
+                                self.status = Status::None;
+                                return Ok(Some(SerialMessage::SetMode(Mode::Stop)));
+                            } else if mode == Mode::Slave || mode == Mode::Sniff {
+                                self.send_message(SerialMessage::Error(
+                                    SIError::StopModeBeforeChange,
+                                ))?;
+                                continue;
+                            }
+                        }
+                        _ => {
+                            continue;
+                        }
+                    }
+                } else {
+                    // Stop after silence or timeout, return
+                    self.status = Status::None;
+                    return Ok(None);
+                }
+            }
+        } else {
+            Err(SIError::SilenceMissing)
+        }
     }
 
-    /// Slave feature: listen the line until request receive, then stop listening.
-    pub fn wait_for_request(&mut self) -> Result<(), SIError> {
-        // TODO
+    /// Slave feature: listen the line until request receive, then stop listening. Returns early if receive
+    /// SerialMessage::SetMode(Mode::Stop) or SerialMessage::Send(). Almost SerialMessage are handled silently
+    /// by self.read_message().
+    pub fn wait_for_request(&mut self) -> Result<Option<SerialMessage>, SIError> {
+        if let Some(silence) = self.silence {
+            loop {
+                self.status = Status::Read;
+                let result = self.read_until_silence(&silence);
+                self.status = Status::None;
+                let read: Option<SerialMessage> = match result {
+                    Ok(r) => r,
+                    Err(e) => {
+                        return Err(e);
+                    }
+                };
+                if let Some(msg) = read {
+                    match msg {
+                        SerialMessage::Send(data) => {
+                            return Ok(Some(SerialMessage::Send(data.clone())));
+                        }
+                        SerialMessage::SetMode(mode) => {
+                            if mode == Mode::Stop {
+                                return Ok(Some(SerialMessage::SetMode(Mode::Stop)));
+                            } else {
+                                self.send_message(SerialMessage::Error(
+                                    SIError::StopModeBeforeChange,
+                                ))?;
+                                continue;
+                            }
+                        }
+                        _ => {
+                            continue;
+                        }
+                    }
+                } else {
+                    return Ok(None);
+                }
+            }
+        } else {
+            Err(SIError::SilenceMissing)
+        }
     }
 
-    /// Main loop, other loop call from there.
-    fn run(&mut self) -> Result<(), SIError> {
-        loop {}
+    /// Master loop
+    fn run_master(&mut self) -> Result<Option<Mode>, SIError> {
+        loop {
+            match self.read_message() {
+                Ok(msg) => {
+                    if let Some(msg) = msg {
+                        match msg {
+                            SerialMessage::SetMode(mode) => {
+                                if mode == Mode::Stop {
+                                    return Ok(Some(Mode::Stop));
+                                }
+                            }
+                            SerialMessage::Send(data) => {
+                                match self.write_read(data, &self.timeout.clone()) {
+                                    Ok(msg) => {
+                                        if let Some(SerialMessage::SetMode(Mode::Stop)) = msg {
+                                            return Ok(Some(Mode::Stop));
+                                        }
+                                    }
+                                    Err(e) => {
+                                        log::error!("{:?}", e);
+                                    }
+                                }
+                            }
+                            _ => {
+                                continue;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("{:?}", e);
+                }
+            }
+        }
+    }
+
+    /// Slave loop
+    fn run_slave(&mut self) -> Result<Option<Mode>, SIError> {
+        loop {
+            match self.wait_for_request() {
+                Ok(msg) => {
+                    if let Some(SerialMessage::SetMode(Mode::Stop)) = msg {
+                        return Ok(Some(Mode::Stop));
+                    }
+                }
+                Err(e) => {
+                    log::error!("{:?}", e);
+                }
+            }
+        }
+    }
+
+    /// Sniff loop
+    fn run_sniff(&mut self) -> Result<Option<Mode>, SIError> {
+        loop {
+            match self.listen() {
+                Ok(msg) => {
+                    if let Some(Mode::Stop) = msg {
+                        return Ok(Some(Mode::Stop));
+                    }
+                }
+                Err(e) => {
+                    log::error!("{:?}", e);
+                }
+            }
+        }
+    }
+
+    /// Main loop
+    pub fn run(&mut self) {
+        loop {
+            match &self.mode {
+                Mode::Stop => {
+                    let result = self.read_message();
+                    match result {
+                        Ok(msg) => {
+                            if let Some(SerialMessage::SetMode(mode)) = msg {
+                                self.mode = mode;
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("{:?}", e);
+                        }
+                    }
+                }
+                Mode::Master => {
+                    let result = self.run_master();
+                    match result {
+                        Ok(msg) => {
+                            if let Some(Mode::Stop) = msg {
+                                self.mode = Mode::Stop;
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("{:?}", e);
+                        }
+                    }
+                }
+                Mode::Slave => {
+                    let result = self.run_slave();
+                    match result {
+                        Ok(msg) => {
+                            if let Some(Mode::Stop) = msg {
+                                self.mode = Mode::Stop;
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("{:?}", e);
+                        }
+                    }
+                }
+                Mode::Sniff => {
+                    let result = self.run_sniff();
+                    match result {
+                        Ok(msg) => {
+                            if let Some(Mode::Stop) = msg {
+                                self.mode = Mode::Stop;
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("{:?}", e);
+                        }
+                    }
+                }
+            }
+        }
     }
 }
