@@ -207,6 +207,7 @@ impl SerialInterface {
         } else {
             Err(SerialInterfaceError::CannotListPorts)
         }
+        // Ok(vec!["/dev/ttyXR0".to_string(), "/dev/ttyXR1".to_string()])
     }
 
     /// CLear data from the read buffer.
@@ -414,13 +415,12 @@ impl SerialInterface {
 
     /// Try to send a message trough self.sender
     async fn send_message(&mut self, msg: SerialMessage) -> Result<(), SIError> {
-        if let Some(sender) = self.sender.take() {
+        if let Some(sender) = self.sender.clone() {
             log::info!("SerialInterface::Send {:?}", &msg);
             sender
                 .send(msg)
                 .await
                 .map_err(|_| SIError::CannotSendMessage)?;
-            self.sender = Some(sender);
             Ok(())
         } else {
             Err(SIError::CannotSendMessage)
@@ -432,7 +432,7 @@ impl SerialInterface {
     /// - SerialMessage::SetMode()
     /// - SerialMessage::Send()
     async fn read_message(&mut self) -> Result<Option<SerialMessage>, SIError> {
-        if let Some(receiver) = self.receiver.take() {
+        if let Some(receiver) = self.receiver.clone() {
             if let Ok(message) = receiver.try_recv() {
                 log::info!("SerialInterface::Receive {:?}", &message);
                 // general case, message to handle in any situation
@@ -514,7 +514,6 @@ impl SerialInterface {
                     return Ok(Some(SerialMessage::Send(data)));
                 }
             }
-            self.receiver = Some(receiver);
         }
         Ok(None)
     }
