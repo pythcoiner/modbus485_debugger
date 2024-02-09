@@ -75,6 +75,8 @@ pub enum SerialMessage {
     Mode(Mode),
 
     Error(SIError),
+    Ping,
+    Pong,
 }
 
 type SIError = SerialInterfaceError;
@@ -456,6 +458,10 @@ impl SerialInterface {
                         self.timeout = *timeout;
                         return Ok(None);
                     }
+                    SerialMessage::Ping => {
+                        self.send_message(SerialMessage::Pong).await?;
+                        return Ok(None);
+                    }
                     _ => {}
                 }
 
@@ -739,7 +745,8 @@ impl SerialInterface {
     pub async fn start(&mut self) {
         log::info!("SerialInterface::run()");
         loop {
-            sleep(Duration::from_nanos(2)).await;
+            // log::info!("SerialInterface::run():loop");
+            sleep(Duration::from_nanos(1000)).await;
             match &self.mode {
                 Mode::Stop => {
                     let result = self.read_message().await;

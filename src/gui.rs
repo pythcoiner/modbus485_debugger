@@ -2,7 +2,7 @@
 use crate::serial_interface::{Mode, SerialMessage, Status};
 use async_channel::{Receiver, Sender};
 use futures::stream::{BoxStream, StreamExt};
-use iced::widget::{Checkbox, Column, Row, TextInput};
+use iced::widget::{Button, Checkbox, Column, Row, TextInput};
 use iced::{executor, Application, Command, Element, Theme};
 use iced_aw::native::SelectionList;
 use iced_futures::core::Hasher;
@@ -18,7 +18,9 @@ pub enum Entry {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Serial(SerialMessage),
+    SerialReceive(SerialMessage),
+    SerialSend(SerialMessage),
+    Send,
     PortSelected(usize),
     BaudSelected(usize),
     ConnectClicked,
@@ -89,14 +91,21 @@ impl Application for Gui {
     }
 
     fn update(&mut self, message: Message) -> Command<Message> {
+        log::info!("Gui::update({:?})", &message);
         match message {
-            // SerialMessage::AvailablePorts(_) => {}
-            // SerialMessage::DataSent(_) => {}
-            // SerialMessage::Receive(_) => {}
-            // SerialMessage::Status(_) => {}
-            // SerialMessage::Connected(_) => {}
-            // SerialMessage::Mode(_) => {}
-            // SerialMessage::Error(_) => {}
+            Message::SerialReceive(msg) => {
+                receive_serial_message(self, msg);
+            }
+            Message::SerialSend(msg) => {
+                send_serial_message(self.sender.clone(), msg);
+            }
+            Message::PortSelected(_) => {}
+            Message::BaudSelected(_) => {}
+            Message::ConnectClicked => {}
+            Message::RequestInput(_) => {}
+            Message::ChecksumChecked(_) => {}
+            Message::SendClicked => {}
+            Message::Init => {}
             _ => {}
         }
 
@@ -104,7 +113,9 @@ impl Application for Gui {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let main_frame = Column::new().push(Row::new());
+        let main_frame = Column::new().push(
+            Row::new().push(Button::new("Test").on_press(Message::SerialSend(SerialMessage::Ping))),
+        );
         // let selection_list = SelectionList::new_with
         // let selection_list = SelectionList::new_with()
         // let input = TextInput::new();
@@ -135,6 +146,38 @@ impl Recipe for DaemonListener {
     }
 
     fn stream(self: Box<Self>, _input: EventStream) -> BoxStream<'static, Self::Output> {
-        self.receiver.clone().map(Message::Serial).boxed()
+        self.receiver.clone().map(Message::SerialReceive).boxed()
     }
+}
+
+fn receive_serial_message(gui: &mut Gui, msg: SerialMessage) {
+    match msg {
+        SerialMessage::ListPorts => {}
+        SerialMessage::AvailablePorts(_) => {}
+        SerialMessage::SetPort(_) => {}
+        SerialMessage::SetBauds(_) => {}
+        SerialMessage::SetCharSize(_) => {}
+        SerialMessage::SetParity(_) => {}
+        SerialMessage::SetStopBits(_) => {}
+        SerialMessage::SetFlowControl(_) => {}
+        SerialMessage::SetTimeout(_) => {}
+        SerialMessage::Connect => {}
+        SerialMessage::Disconnect => {}
+        SerialMessage::Send(_) => {}
+        SerialMessage::DataSent(_) => {}
+        SerialMessage::Receive(_) => {}
+        SerialMessage::GetStatus => {}
+        SerialMessage::Status(_) => {}
+        SerialMessage::GetConnectionStatus => {}
+        SerialMessage::Connected(_) => {}
+        SerialMessage::SetMode(_) => {}
+        SerialMessage::Mode(_) => {}
+        SerialMessage::Error(_) => {}
+        SerialMessage::Ping => {}
+        SerialMessage::Pong => {}
+    }
+}
+
+fn send_serial_message(sender: Sender<SerialMessage>, msg: SerialMessage) {
+    tokio::spawn(async move { sender.send(msg).await });
 }
