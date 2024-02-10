@@ -5,7 +5,7 @@ use std::fmt::Formatter;
 use crate::serial_interface::{Mode, SerialMessage, Status};
 use async_channel::{Receiver, Sender};
 use futures::stream::{BoxStream, StreamExt};
-use iced::widget::{Button, Checkbox, Column, PickList, Row, Space, Text, TextInput};
+use iced::widget::{Button, button, Checkbox, Column, PickList, Row, Space, Text, TextInput};
 use iced::{executor, Application, Command, Element, Length, Theme, Color};
 use iced_futures::core::{Hasher};
 use iced_futures::subscription::{EventStream, Recipe};
@@ -78,7 +78,7 @@ pub enum Message {
     GuiError(GuiError),
     SerialReceive(SerialMessage),
     SerialSend(SerialMessage),
-    Send,
+    ListPort,
     PortSelected(String),
     BaudSelected(Baud),
     ConnectClicked,
@@ -124,10 +124,11 @@ impl Gui {
         tokio::spawn(async move { sender.send(msg).await });
     }
 
-    fn select_port(&mut self, str: String) {
-        self.port_selected = Some(str.clone());
-        Gui::send_serial_message(self.sender.clone(), SerialMessage::SetPort(str));
-
+    fn select_port(&mut self, str: Option<String>) {
+        self.port_selected = str.clone();
+        if let Some(str) = str {
+            Gui::send_serial_message(self.sender.clone(), SerialMessage::SetPort(str));
+        }
     }
 
     fn select_bauds(&mut self, baud: Baud) {
@@ -232,26 +233,51 @@ impl Gui {
 
     fn toggle_connect(&mut self) {
         if self.daemon_connected {
+            Gui::send_serial_message(self.sender.clone(), SerialMessage::SetMode(Mode::Stop));
             Gui::send_serial_message(self.sender.clone(), SerialMessage::Disconnect);
         } else {
             Gui::send_serial_message(self.sender.clone(), SerialMessage::Connect);
         }
     }
 
-    fn data_to_button(data: Option<Vec<u8>>) -> Button<'static, Message> {
-        let data_str = if let Some(data) = data {
-            Gui::add_spaces(hex::encode(data))
+    fn data_to_str(data: Option<Vec<u8>>, prefix: String) -> String {
+        if let Some(data) = data {
+            let d = Gui::add_spaces(hex::encode(data));
+            format!("{}  {}", prefix, d)
         } else {
             "Error".to_string()
-        };
-        Gui::button(&data_str[..], None)
-            .width(Length::Fill)
+        }
+    }
+
+    fn entry_to_row(entry: Entry) -> Row<'static, Message> {
+        match entry {
+            Entry::Receive(data) => {
+                Row::new()
+                    .push(Space::with_width(Length::Fixed(100.0)))
+                    .push(Gui::button(&Gui::data_to_str(data, "Received:  ".to_string())[..], None)
+                        .width(Length::Fill)
+                        .style(BtnTheme::Destructive))
+            }
+            Entry::Send(data) => {
+                Row::new()
+                    .push(Gui::button(&Gui::data_to_str(data, "Sent:  ".to_string())[..], None)
+                        .width(Length::Fill)
+                        .style(BtnTheme::Positive))
+                    .push(Space::with_width(Length::Fixed(100.0)))
+            }
+        }
+
     }
 
     fn receive_serial_message(&mut self, msg: SerialMessage) {
         self.last_message = Some(msg.clone());
         match msg {
-            SerialMessage::AvailablePorts(ports) => self.ports = Some(ports),
+            SerialMessage::AvailablePorts(ports) => {
+                if ports.is_empty() {
+                    self.select_port(None)
+                }
+                self.ports = Some(ports);
+            },
             SerialMessage::DataSent(data) => self.add_history(Entry::Send(Some(data))),
             SerialMessage::Receive(data) => self.add_history(Entry::Receive(Some(data))),
             SerialMessage::Status(status) => self.daemon_status = Some(status),
@@ -322,13 +348,13 @@ impl Application for Gui {
             Baud::Bauds115200,
         ];
 
-        let h = vec![
-            Entry::Send(Some(vec![0,20, 30, 40])),
-            Entry::Receive(Some(vec![0,20, 30, 40])),
-            Entry::Send(Some(vec![0,20, 30, 40])),
-            Entry::Receive(Some(vec![0,20, 30, 40])),
-            Entry::Send(None),
-        ];
+        // let h = vec![
+        //     Entry::Send(Some(vec![0,20, 30, 40])),
+        //     Entry::Receive(Some(vec![0,20, 30, 40])),
+        //     Entry::Send(Some(vec![0,20, 30, 40])),
+        //     Entry::Receive(Some(vec![0,20, 30, 40])),
+        //     Entry::Send(None),
+        // ];
 
         let mut gui = Gui {
             sender: flags.sender,
@@ -340,8 +366,8 @@ impl Application for Gui {
             baud_rates,
             baud_selected: None,
             request: "".to_string(),
-            // history: Vec::new(),
-            history: h,
+            history: Vec::new(),
+            // history: h,
             last_message: None,
             internal_error: None,
             daemon_mode: None,
@@ -366,14 +392,20 @@ impl Application for Gui {
             Message::SerialSend(msg) => {
                 Gui::send_serial_message(self.sender.clone(), msg);
             }
-            Message::PortSelected(str) => {self.select_port(str)}
+            Message::PortSelected(str) => {self.select_port(Some(str))}
             Message::BaudSelected(b) => {self.select_bauds(b)}
             Message::ConnectClicked => {self.toggle_connect()}
             Message::RequestInput(str) => {self.process_input(str)}
             Message::ChecksumChecked(s) => {self.set_checksum(s)}
-            Message::SendClicked => {if let Err(e) = self.send_request(){
-                return Gui::command(Message::GuiError(e));
+            Message::SendClicked => {
+                if self.daemon_connected {
+                    if let Err(e) = self.send_request(){
+                        return Gui::command(Message::GuiError(e));
+                }
             }}
+            Message::ListPort => {
+                Gui::send_serial_message(self.sender.clone(), SerialMessage::ListPorts);
+            }
             Message::GuiError(e) => {
                 if let Some(msg) = self.handle_gui_error(e) {
                     return Gui::command(msg);
@@ -386,20 +418,26 @@ impl Application for Gui {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        // TODO: grey out connect if bauds or port not set (
-
         let ports = if let Some(ports) = &self.ports {
             &ports[..]
         } else {
             &[]
         };
+
         let button_label = if self.daemon_connected {
             "Disconnect"
         } else {
             "Connect"
         };
+
         let connect_msg = if self.baud_selected.is_some() && self.port_selected.is_some() {
             Some(Message::ConnectClicked)
+        } else {
+            None
+        };
+
+        let send_msg = if self.daemon_connected {
+            Some(Message::SendClicked)
         } else {
             None
         };
@@ -413,22 +451,8 @@ impl Application for Gui {
             )
             .push(Space::with_height(Length::Fixed(4.0)));
         for entry in self.history.clone() {
-            match entry {
-                Entry::Receive(data) => {
-                    history = history.push(Row::new()
-                            .push(Space::with_width(Length::Fixed(100.0)))
-                            .push(Gui::data_to_button(data)
-                                .style(BtnTheme::Destructive)))
-                        .push(Space::with_height(Length::Fixed(2.0)))
-                }
-                Entry::Send(data) => {
-                    history = history.push(Row::new()
-                            .push(Gui::data_to_button(data)
-                                .style(BtnTheme::Positive))
-                            .push(Space::with_width(Length::Fixed(100.0))))
-                        .push(Space::with_height(Length::Fixed(2.0)))
-                }
-            }
+            history = history.push(Gui::entry_to_row(entry))
+                .push(Space::with_height(Length::Fixed(2.0)))
         }
 
         let mut msg_bar = Row::new();
@@ -455,6 +479,7 @@ impl Application for Gui {
                         PickList::new(ports, self.port_selected.clone(), Message::PortSelected)
                             .text_size(10),
                     )
+                    .push(Gui::button("", Some(Message::ListPort)).width(Length::Fixed(23.0)))
                     .push(Space::with_width(Length::Fixed(100.0)))
                     .push(Text::new("Bauds:  "))
                     .push(
@@ -471,14 +496,14 @@ impl Application for Gui {
                     .push(Text::new("Request:  "))
                     .push(TextInput::new("", &self.request)
                         .on_input(Message::RequestInput)
-                        .on_submit(Message::Send)
+                        .on_submit(Message::SendClicked)
                         .size(12)
                         )
                     .push(Space::with_width(Length::Fixed(10.0)))
                     .push(Checkbox::new("checksum", self.checksum, Message::ChecksumChecked)
                         .size(15))
                     .push(Space::with_width(Length::Fixed(10.0)))
-                    .push(Gui::button("Send", Some(Message::Send)))
+                    .push(Gui::button("Send", send_msg))
             )
             .push(Space::with_height(Length::Fixed(10.0)))
             .push(Row::new()
@@ -490,9 +515,9 @@ impl Application for Gui {
         main_frame.into()
     }
 
-    // fn theme(&self) -> Self::Theme {
-    //     Theme::Dark
-    // }
+    fn theme(&self) -> Self::Theme {
+        Theme::Dark
+    }
 
     fn subscription(&self) -> iced::Subscription<Message> {
         iced::Subscription::from_recipe(DaemonListener {

@@ -14,9 +14,9 @@ pub enum SerialInterfaceError {
     CannotListPorts,
     StopToChangeSettings,
     DisconnectToChangeSettings,
-    CannotReadPort,
+    CannotReadPort(Option<String>),
     WrongReadArguments,
-    CannotOpenPort,
+    CannotOpenPort(String),
     PortNotOpened,
     SlaveModeNeedModbusID,
     PortAlreadyOpen,
@@ -29,6 +29,7 @@ pub enum SerialInterfaceError {
     CannotWritePort,
     StopModeBeforeChange,
     WaitingForResponse,
+    CannotSetTimeout,
 }
 
 #[derive(Debug, Clone)]
@@ -218,15 +219,27 @@ impl SerialInterface {
     fn clear_read_buffer(&mut self) -> Result<(), SIError> {
         let port_open = self.port.is_some();
         if port_open {
-            let mut buffer = [0u8; 1024];
-            let mut ret: usize;
+            let mut buffer = [0u8; 24];
             loop {
-                ret = self
+                let read = self
                     .port
                     .as_mut()
                     .unwrap()
-                    .read(&mut buffer)
-                    .map_err(|_| SIError::CannotReadPort)?;
+                    .read(&mut buffer);
+                let ret = match read {
+                    Ok(r) => {
+                        log::info!("SerialInterface::buffer clear {:?}", buffer.to_vec());
+                        r
+                    },
+                    Err(e) => {
+                        let str_err = e.to_string();
+                        if str_err == *"Operation timed out" {
+                            0
+                        } else {
+                            return Err(SIError::CannotReadPort(Some(str_err)));
+                        }
+                    }
+                };
                 if ret == 0 {
                     break;
                 };
@@ -240,27 +253,33 @@ impl SerialInterface {
     }
 
     /// Read 1 bytes of data, return None if no data in buffer.
-    fn read_byte(&mut self) -> Result<Option<u8>, SIError> {
-        log::info!("read_bytes()");
+    fn read_byte(&mut self) -> Result<Option<u8>, SIError>{
         let port_open = self.port.is_some();
-        log::info!("port_open={:?}", port_open);
         if port_open {
-            self.clear_read_buffer()?;
             let mut buffer = [0u8; 1];
-            let l = self
+            let read = self
                 .port
                 .as_mut()
                 .unwrap()
-                .read(&mut buffer)
-                .map_err(|_| SIError::CannotReadPort)?;
+                .read(&mut buffer);
+            let l = match read {
+                Ok(r) => {r},
+                Err(e) => {
+                    let str_err = e.to_string();
+                    if str_err == *"Operation timed out" {
+                        0
+                    } else {
+                        return Err(SIError::CannotReadPort(Some(str_err)));
+                    }
+                }
+            };
             if l > 0 {
+                log::info!("SerialInterface::read_byte({:?})", buffer);
                 Ok(Some(buffer[0]))
             } else {
                 Ok(None)
             }
         } else {
-            //FIXME: this
-            // Ok(None)
             Err(SIError::PortNotOpened)
         }
     }
@@ -274,9 +293,7 @@ impl SerialInterface {
         silence: Option<&Duration>,
         timeout: Option<&Duration>,
     ) -> Result<Option<SerialMessage>, SIError> {
-        log::info!("read_until_size_or_silence_or_timeout_or_message() => before clear");
         self.clear_read_buffer()?;
-        log::info!("read_until_size_or_silence_or_timeout_or_message() => after clear");
         let mut buffer: Vec<u8> = Vec::new();
         let start = Instant::now();
         let mut last_data = Instant::now();
@@ -289,6 +306,7 @@ impl SerialInterface {
             sleep(Duration::from_nanos(1)).await;
             let result = self.read_byte()?;
             if let Some(data) = result {
+                log::info!("Start receive data: {}", data);
                 self.status = Status::Receipt;
                 buffer.push(data);
                 // reset the silence counter
@@ -317,7 +335,8 @@ impl SerialInterface {
                     last_data = Instant::now();
                 }
                 // wait for silence
-                if &Instant::now().duration_since(last_data) > silence {
+                if (&Instant::now().duration_since(last_data) > silence) && !buffer.is_empty() {
+                    log::info!("silence reached, data received: {:?}", buffer.to_vec());
                     let result = self
                         .send_message(SerialMessage::Receive(buffer.clone()))
                         .await;
@@ -413,9 +432,9 @@ impl SerialInterface {
             Err(SIError::PathMissing)
         } else {
             self.set_port()?;
-            self.port = Some(
-                serial::open(&self.path.as_ref().unwrap()).map_err(|_| SIError::CannotOpenPort)?,
-            );
+            let mut port = serial::open(&self.path.as_ref().unwrap()).map_err(|e| SIError::CannotOpenPort(e.to_string()))?;
+            port.set_timeout(Duration::from_nanos(2)).map_err(|_| SIError::CannotSetTimeout)?;
+            self.port = Some(port);
             Ok(())
         }
     }
@@ -525,7 +544,13 @@ impl SerialInterface {
                             }
                             return Ok(None);
                         }
-                        SerialMessage::Disconnect => {}
+                        SerialMessage::Disconnect => {
+                            let result = self.close();
+                            self.send_message(SerialMessage::Connected(false)).await?;
+                            if let Err(e) = result {
+                                self.send_message(SerialMessage::Error(e)).await?;
+                            }
+                        }
                         _ => {}
                     }
                 } else if let SerialMessage::Send(data) = message {
@@ -537,11 +562,12 @@ impl SerialInterface {
     }
 
     /// Write data to the serial line.
-    fn write(&mut self, data: Vec<u8>) -> Result<(), SIError> {
+    async fn write(&mut self, data: Vec<u8>) -> Result<(), SIError> {
         let port_open = self.port.is_some();
         if port_open {
             let buffer = &data[0..data.len()];
             self.port.as_mut().unwrap().write(buffer).map_err(|_| SIError::CannotWritePort)?;
+            self.send_message(SerialMessage::DataSent(data)).await?;
             Ok(())
         } else {
             Err(SIError::PortNotOpened)
@@ -553,16 +579,14 @@ impl SerialInterface {
     /// If receive a SerialMessage::Send(), pause listen in order to send message then resume listening.
     /// Stop listening if receive SerialMessage::SetMode(Stop). Almost SerialMessage are handled silently by self.read_message().
     pub async fn listen(&mut self) -> Result<Option<Mode>, SIError> {
-        log::info!("listen()");
         loop {
-            log::info!("listen():loop");
             if let Some(silence) = &self.silence.clone() {
                 self.status = Status::Read;
                 if let Some(msg) = self.read_until_silence(silence).await? {
                     match msg {
                         SerialMessage::Send(data) => {
                             self.status = Status::Write;
-                            let write = self.write(data);
+                            let write = self.write(data).await;
                             self.status = Status::None;
                             if let Err(e) = write {
                                 self.send_message(SerialMessage::Error(e)).await?;
@@ -601,7 +625,7 @@ impl SerialInterface {
     ) -> Result<Option<SerialMessage>, SIError> {
         if let Some(silence) = &self.silence.clone() {
             self.status = Status::Write;
-            if let Err(e) = self.write(data) {
+            if let Err(e) = self.write(data).await {
                 self.status = Status::None;
                 return Err(e);
             } else {
