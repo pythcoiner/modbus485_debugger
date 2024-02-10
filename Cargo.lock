@@ -967,6 +967,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0c62115964e08cb8039170eb33c1d0e2388a256930279edca206fff675f82c3"
 
 [[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
 name = "hexf-parse"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1135,6 +1141,17 @@ dependencies = [
  "iced_core 0.10.0",
  "once_cell",
  "palette 0.7.4",
+]
+
+[[package]]
+name = "iced_table"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df259bed1d4995a9f8e0e55bebb8de27019c872cf1cfdac8f062fc09bba15caf"
+dependencies = [
+ "iced_core 0.10.0",
+ "iced_style 0.9.0",
+ "iced_widget",
 ]
 
 [[package]]
@@ -1528,9 +1545,11 @@ dependencies = [
  "colored",
  "fern",
  "futures",
+ "hex",
  "iced",
  "iced_futures 0.7.0",
  "iced_native",
+ "iced_table",
  "log",
  "serial",
  "serialport",

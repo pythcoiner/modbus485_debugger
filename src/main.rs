@@ -11,8 +11,9 @@ use serial_interface::{SerialInterface, SerialMessage};
 
 #[tokio::main]
 async fn main() {
+    let verbose_log = false;
     fern::Dispatch::new()
-        .format(|out, message, record| {
+        .format(move |out, message, record| {
             let color = match record.level() {
                 log::Level::Error => "red",
                 log::Level::Warn => "yellow",
@@ -31,14 +32,22 @@ async fn main() {
                     file_line = format!("{}:{}", file_line, l);
                 }
             }
-            let formatted = format!(
-                "[{}][{}{}][{}] {}",
-                Local::now().format("%Y-%m-%d %H:%M:%S"), // Date and time
-                record.target(),                          // Crate and module path
-                file_line,
-                record.level(), // Log level (method in this context)
-                message         // Actual log message
-            );
+            let formatted = if verbose_log {
+                format!(
+                    "[{}][{}{}][{}] {}",
+                    Local::now().format("%Y-%m-%d %H:%M:%S"),
+                    record.target(),
+                    file_line,
+                    record.level(),
+                    message
+                )
+            } else {
+                format!(
+                    "[{}] {}",
+                    record.level(),
+                    message
+                )
+            };
             out.finish(format_args!("{}", formatted.color(color)))
         })
         .level(log::LevelFilter::Error)
@@ -55,10 +64,13 @@ async fn main() {
         .sender(serial_sender)
         .receiver(serial_receiver.clone());
 
-    let settings = Settings::with_flags(Flags {
+    let mut settings = Settings::with_flags(Flags {
         sender: gui_sender,
         receiver: gui_receiver,
     });
+
+    settings.window.size = (600, 400);
+    settings.window.resizable = false;
 
     tokio::spawn(async move {
         serial.start().await;

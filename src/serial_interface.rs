@@ -4,6 +4,7 @@ use async_channel::{Receiver, Sender};
 use serial::{BaudRate, CharSize, FlowControl, Parity, SerialPort, StopBits, SystemPort};
 use serialport::available_ports;
 use std::io::{Read, Write};
+use std::ops::Deref;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 // use futures::TryFutureExt;
@@ -12,6 +13,7 @@ use tokio::time::sleep;
 pub enum SerialInterfaceError {
     CannotListPorts,
     StopToChangeSettings,
+    DisconnectToChangeSettings,
     CannotReadPort,
     WrongReadArguments,
     CannotOpenPort,
@@ -110,7 +112,7 @@ impl SerialInterface {
             stop_bits: StopBits::Stop1,
             flow_control: FlowControl::FlowNone,
             port: None,
-            silence: None,
+            silence: Some(Duration::from_nanos(1000)), // FIXME: what policy for init silence here?
             timeout: Duration::from_nanos(1000), // FIXME: what policy for init timeout here?
             receiver: None,
             sender: None,
@@ -183,6 +185,8 @@ impl SerialInterface {
                 if let Mode::Slave = m {
                     return Err(SIError::SlaveModeNeedModbusID);
                 }
+            } else if self.port.is_some() {
+                return Err(SIError::DisconnectToChangeSettings);
             }
             self.mode = m;
             log::info!("SerialInterface::switch mode to {:?}", &self.mode);
@@ -212,39 +216,51 @@ impl SerialInterface {
 
     /// CLear data from the read buffer.
     fn clear_read_buffer(&mut self) -> Result<(), SIError> {
-        if let Some(mut port) = self.port.take() {
+        let port_open = self.port.is_some();
+        if port_open {
             let mut buffer = [0u8; 1024];
             let mut ret: usize;
             loop {
-                ret = port
+                ret = self
+                    .port
+                    .as_mut()
+                    .unwrap()
                     .read(&mut buffer)
                     .map_err(|_| SIError::CannotReadPort)?;
                 if ret == 0 {
                     break;
                 };
             }
-            self.port = Some(port);
             Ok(())
         } else {
-            Err(SIError::PortNotOpened)
+            // FIXME: uncomment
+            Ok(())//
+            // Err(SIError::PortNotOpened)
         }
     }
 
     /// Read 1 bytes of data, return None if no data in buffer.
     fn read_byte(&mut self) -> Result<Option<u8>, SIError> {
-        if let Some(mut port) = self.port.take() {
+        log::info!("read_bytes()");
+        let port_open = self.port.is_some();
+        log::info!("port_open={:?}", port_open);
+        if port_open {
             self.clear_read_buffer()?;
             let mut buffer = [0u8; 1];
-            let l = port
+            let l = self
+                .port
+                .as_mut()
+                .unwrap()
                 .read(&mut buffer)
                 .map_err(|_| SIError::CannotReadPort)?;
-            self.port = Some(port);
             if l > 0 {
                 Ok(Some(buffer[0]))
             } else {
                 Ok(None)
             }
         } else {
+            //FIXME: this
+            // Ok(None)
             Err(SIError::PortNotOpened)
         }
     }
@@ -258,7 +274,9 @@ impl SerialInterface {
         silence: Option<&Duration>,
         timeout: Option<&Duration>,
     ) -> Result<Option<SerialMessage>, SIError> {
+        log::info!("read_until_size_or_silence_or_timeout_or_message() => before clear");
         self.clear_read_buffer()?;
+        log::info!("read_until_size_or_silence_or_timeout_or_message() => after clear");
         let mut buffer: Vec<u8> = Vec::new();
         let start = Instant::now();
         let mut last_data = Instant::now();
@@ -367,8 +385,9 @@ impl SerialInterface {
 
     /// Load port settings
     fn set_port(&mut self) -> Result<(), SIError> {
-        if let Some(mut port) = self.port.take() {
-            port.reconfigure(&|settings| {
+        let port_open = self.port.is_some();
+        if port_open {
+            self.port.as_mut().unwrap().reconfigure(&|settings| {
                 settings.set_baud_rate(self.baud_rate)?;
                 settings.set_char_size(self.char_size);
                 settings.set_parity(self.parity);
@@ -377,21 +396,19 @@ impl SerialInterface {
                 Ok(())
             })
             .unwrap();
-            self.port = Some(port);
         }
         Ok(())
     }
 
     /// Open the serial port.
     pub fn open(&mut self) -> Result<(), SIError> {
-        if self.port.is_some() {
+        if self.port.is_some() || self.mode != Mode::Stop{
             Err(SIError::PortAlreadyOpen)
-        } else if let Mode::Stop = self.mode {
-            Err(SIError::PortNeededToOpenPort)
-        } else if self.modbus_id.is_none() {
-            Err(SIError::SlaveModeNeedModbusID)
-        } else if self.mode != Mode::Master && self.silence.is_none() {
-            Err(SIError::SilenceMissing)
+            // TODO => SlaveModeNeedModbusID move this Mode::Slave
+        // } else if self.modbus_id.is_none() {
+        //     Err(SIError::SlaveModeNeedModbusID)
+        // } else if self.mode != Mode::Master && self.silence.is_none() {
+        //     Err(SIError::SilenceMissing)
         } else if self.path.is_none() {
             Err(SIError::PathMissing)
         } else {
@@ -405,7 +422,7 @@ impl SerialInterface {
 
     /// Close the serial port.
     pub fn close(&mut self) -> Result<(), SIError> {
-        if let Some(port) = self.port.take() {
+        if let Some(port) = self.port.take(){
             drop(port);
             Ok(())
         } else {
@@ -500,8 +517,9 @@ impl SerialInterface {
                             return Ok(None);
                         }
                         SerialMessage::Connect => {
-                            if self.open().is_err() {
+                            if let Err(e) = self.open() {
                                 self.send_message(SerialMessage::Connected(false)).await?;
+                                self.send_message(SerialMessage::Error(e)).await?;
                             } else {
                                 self.send_message(SerialMessage::Connected(true)).await?;
                             }
@@ -520,10 +538,10 @@ impl SerialInterface {
 
     /// Write data to the serial line.
     fn write(&mut self, data: Vec<u8>) -> Result<(), SIError> {
-        if let Some(mut port) = self.port.take() {
+        let port_open = self.port.is_some();
+        if port_open {
             let buffer = &data[0..data.len()];
-            port.write(buffer).map_err(|_| SIError::CannotWritePort)?;
-            self.port = Some(port);
+            self.port.as_mut().unwrap().write(buffer).map_err(|_| SIError::CannotWritePort)?;
             Ok(())
         } else {
             Err(SIError::PortNotOpened)
@@ -535,7 +553,9 @@ impl SerialInterface {
     /// If receive a SerialMessage::Send(), pause listen in order to send message then resume listening.
     /// Stop listening if receive SerialMessage::SetMode(Stop). Almost SerialMessage are handled silently by self.read_message().
     pub async fn listen(&mut self) -> Result<Option<Mode>, SIError> {
+        log::info!("listen()");
         loop {
+            log::info!("listen():loop");
             if let Some(silence) = &self.silence.clone() {
                 self.status = Status::Read;
                 if let Some(msg) = self.read_until_silence(silence).await? {
@@ -726,7 +746,8 @@ impl SerialInterface {
     /// Sniff loop
     async fn run_sniff(&mut self) -> Result<Option<Mode>, SIError> {
         loop {
-            sleep(Duration::from_nanos(2)).await;
+
+            sleep(Duration::from_nanos(200000)).await;
             match self.listen().await {
                 Ok(msg) => {
                     if let Some(Mode::Stop) = msg {
@@ -734,7 +755,8 @@ impl SerialInterface {
                     }
                 }
                 Err(e) => {
-                    log::error!("{:?}", e);
+                    log::error!("SerialInterface::run_sniff():{:?}", e.clone());
+                    return Err(e);
                 }
             }
         }
@@ -744,7 +766,7 @@ impl SerialInterface {
     pub async fn start(&mut self) {
         log::info!("SerialInterface::run()");
         loop {
-            // log::info!("SerialInterface::run():loop");
+            // FIXME: set duration
             sleep(Duration::from_nanos(1000)).await;
             match &self.mode {
                 Mode::Stop => {
@@ -757,7 +779,7 @@ impl SerialInterface {
                             }
                         }
                         Err(e) => {
-                            log::error!("{:?}", e);
+                            log::error!("Mode Stop: {:?}", e);
                         }
                     }
                 }
@@ -772,6 +794,8 @@ impl SerialInterface {
                         }
                         Err(e) => {
                             log::error!("{:?}", e);
+                            log::info!("SerialInterface::switch mode to Mode::Stop");
+                            self.mode = Mode::Stop;
                         }
                     }
                 }
@@ -786,6 +810,8 @@ impl SerialInterface {
                         }
                         Err(e) => {
                             log::error!("{:?}", e);
+                            log::info!("SerialInterface::switch mode to Mode::Stop");
+                            self.mode = Mode::Stop;
                         }
                     }
                 }
@@ -800,6 +826,8 @@ impl SerialInterface {
                         }
                         Err(e) => {
                             log::error!("{:?}", e);
+                            log::info!("SerialInterface::switch mode to Mode::Stop");
+                            self.mode = Mode::Stop;
                         }
                     }
                 }
