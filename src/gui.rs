@@ -200,10 +200,6 @@ impl Gui {
         self.daemon_mode = Some(mode);
     }
 
-    fn str_to_data(str: String) -> Result<Vec<u8>, GuiError> {
-        hex::decode(str).map_err(|_| GuiError::WrongRequestData)
-    }
-
     fn add_spaces(str: String) -> String {
         str.chars()
             .enumerate()
@@ -242,11 +238,15 @@ impl Gui {
 
     fn data_to_str(data: Option<Vec<u8>>, prefix: String) -> String {
         if let Some(data) = data {
-            let d = Gui::add_spaces(hex::encode(data));
-            format!("{}  {}", prefix, d)
+            let d = Gui::add_spaces(hex::encode(data.clone()));
+            format!("{} {}", prefix, d)
         } else {
             "Error".to_string()
         }
+    }
+
+    fn str_to_data(str: String) -> Result<Vec<u8>, GuiError> {
+        hex::decode(str).map_err(|_| GuiError::WrongRequestData)
     }
 
     fn entry_to_row(entry: Entry) -> Row<'static, Message> {
@@ -259,8 +259,9 @@ impl Gui {
                         .style(BtnTheme::Destructive))
             }
             Entry::Send(data) => {
+                let s = Gui::data_to_str(data, "Sent:  ".to_string());
                 Row::new()
-                    .push(Gui::button(&Gui::data_to_str(data, "Sent:  ".to_string())[..], None)
+                    .push(Gui::button(&s, None)
                         .width(Length::Fill)
                         .style(BtnTheme::Positive))
                     .push(Space::with_width(Length::Fixed(100.0)))
@@ -312,14 +313,14 @@ impl Gui {
     }
 
     fn button(text: &str, msg: Option<Message>) -> Button<'static, Message> {
-        let w = (text.len() * 12) as f32;
+        let w = (text.len() * 10) as f32;
         let mut button = Button::new(
             Column::new()
                 .push(Space::with_height(Length::Fill))
                 .push(
                     Row::new()
                         .push(Space::with_width(Length::Fill))
-                        .push(Text::new(text.to_owned()).size(12))
+                        .push(Text::new(text.to_string()).size(10))
                         .push(Space::with_width(Length::Fill)),
                 )
                 .push(Space::with_height(Length::Fill)),

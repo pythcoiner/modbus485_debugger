@@ -4,10 +4,8 @@ use async_channel::{Receiver, Sender};
 use serial::{BaudRate, CharSize, FlowControl, Parity, SerialPort, StopBits, SystemPort};
 use serialport::available_ports;
 use std::io::{Read, Write};
-use std::ops::Deref;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
-// use futures::TryFutureExt;
 
 #[derive(Debug, Clone)]
 pub enum SerialInterfaceError {
@@ -110,11 +108,11 @@ impl SerialInterface {
             baud_rate: BaudRate::Baud19200,
             char_size: CharSize::Bits8,
             parity: Parity::ParityNone,
-            stop_bits: StopBits::Stop1,
+            stop_bits: StopBits::Stop2,
             flow_control: FlowControl::FlowNone,
             port: None,
-            silence: Some(Duration::from_nanos(1000)), // FIXME: what policy for init silence here?
-            timeout: Duration::from_nanos(1000), // FIXME: what policy for init timeout here?
+            silence: Some(Duration::from_nanos(10000)), // FIXME: what policy for init silence here?
+            timeout: Duration::from_nanos(10000), // FIXME: what policy for init timeout here?
             receiver: None,
             sender: None,
         })
@@ -303,7 +301,7 @@ impl SerialInterface {
         }
 
         loop {
-            sleep(Duration::from_nanos(1)).await;
+            sleep(Duration::from_nanos(2)).await;
             let result = self.read_byte()?;
             if let Some(data) = result {
                 log::info!("Start receive data: {}", data);
@@ -433,7 +431,7 @@ impl SerialInterface {
         } else {
             self.set_port()?;
             let mut port = serial::open(&self.path.as_ref().unwrap()).map_err(|e| SIError::CannotOpenPort(e.to_string()))?;
-            port.set_timeout(Duration::from_nanos(2)).map_err(|_| SIError::CannotSetTimeout)?;
+            port.set_timeout(Duration::from_nanos(10)).map_err(|_| SIError::CannotSetTimeout)?;
             self.port = Some(port);
             Ok(())
         }
@@ -563,6 +561,7 @@ impl SerialInterface {
 
     /// Write data to the serial line.
     async fn write(&mut self, data: Vec<u8>) -> Result<(), SIError> {
+        log::info!("write({:?})", data.clone());
         let port_open = self.port.is_some();
         if port_open {
             let buffer = &data[0..data.len()];
@@ -771,7 +770,7 @@ impl SerialInterface {
     async fn run_sniff(&mut self) -> Result<Option<Mode>, SIError> {
         loop {
 
-            sleep(Duration::from_nanos(200000)).await;
+            sleep(Duration::from_nanos(2)).await;
             match self.listen().await {
                 Ok(msg) => {
                     if let Some(Mode::Stop) = msg {
@@ -791,7 +790,7 @@ impl SerialInterface {
         log::info!("SerialInterface::run()");
         loop {
             // FIXME: set duration
-            sleep(Duration::from_nanos(1000)).await;
+            sleep(Duration::from_nanos(2)).await;
             match &self.mode {
                 Mode::Stop => {
                     let result = self.read_message().await;
