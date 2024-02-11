@@ -245,8 +245,8 @@ impl SerialInterface {
             Ok(())
         } else {
             // FIXME: uncomment
-            Ok(())//
-            // Err(SIError::PortNotOpened)
+            // Ok(())//
+            Err(SIError::PortNotOpened)
         }
     }
 
