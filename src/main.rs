@@ -11,7 +11,7 @@ use serial_interface::{SerialInterface, SerialMessage};
 
 #[tokio::main]
 async fn main() {
-    let verbose_log = false;
+    let verbose_log = true;
     fern::Dispatch::new()
         .format(move |out, message, record| {
             let color = match record.level() {
@@ -51,7 +51,7 @@ async fn main() {
             out.finish(format_args!("{}", formatted.color(color)))
         })
         .level(log::LevelFilter::Error)
-        .level_for("modbus_client", log::LevelFilter::Info)
+        .level_for("serial_interface", log::LevelFilter::Info)
         .chain(std::io::stdout())
         .apply()
         .unwrap();

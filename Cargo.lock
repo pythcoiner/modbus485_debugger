@@ -1537,26 +1537,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "modbus_client"
-version = "0.1.0"
-dependencies = [
- "async-channel",
- "chrono",
- "colored",
- "fern",
- "futures",
- "hex",
- "iced",
- "iced_futures 0.7.0",
- "iced_native",
- "iced_table",
- "log",
- "serial",
- "serialport",
- "tokio",
-]
-
-[[package]]
 name = "naga"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2300,6 +2280,26 @@ checksum = "15c6d3b776267a75d31bbdfd5d36c0ca051251caafc285827052bc53bcdc8162"
 dependencies = [
  "libc",
  "serial-core",
+]
+
+[[package]]
+name = "serial_interface"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "chrono",
+ "colored",
+ "fern",
+ "futures",
+ "hex",
+ "iced",
+ "iced_futures 0.7.0",
+ "iced_native",
+ "iced_table",
+ "log",
+ "serial",
+ "serialport",
+ "tokio",
 ]
 
 [[package]]

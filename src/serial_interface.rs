@@ -244,8 +244,6 @@ impl SerialInterface {
             }
             Ok(())
         } else {
-            // FIXME: uncomment
-            // Ok(())//
             Err(SIError::PortNotOpened)
         }
     }
@@ -272,7 +270,7 @@ impl SerialInterface {
                 }
             };
             if l > 0 {
-                log::info!("SerialInterface::read_byte({:?})", buffer);
+                log::debug!("SerialInterface::read_byte({:?})", buffer);
                 Ok(Some(buffer[0]))
             } else {
                 Ok(None)
@@ -301,10 +299,10 @@ impl SerialInterface {
         }
 
         loop {
-            sleep(Duration::from_nanos(2)).await;
+            // sleep(Duration::from_nanos(2)).await;
             let result = self.read_byte()?;
             if let Some(data) = result {
-                log::info!("Start receive data: {}", data);
+                log::debug!("Start receive data: {}", data);
                 self.status = Status::Receipt;
                 buffer.push(data);
                 // reset the silence counter
@@ -333,8 +331,13 @@ impl SerialInterface {
                     last_data = Instant::now();
                 }
                 // wait for silence
-                if (&Instant::now().duration_since(last_data) > silence) && !buffer.is_empty() {
-                    log::info!("silence reached, data received: {:?}", buffer.to_vec());
+                let from_last_data = &Instant::now().duration_since(last_data);
+                if !buffer.is_empty() {
+                    log::debug!("Duration from last data: {:?}", from_last_data);
+                }
+                
+                if (from_last_data > silence) && !buffer.is_empty() {
+                    log::debug!("silence reached, data received: {:?}", buffer.to_vec());
                     let result = self
                         .send_message(SerialMessage::Receive(buffer.clone()))
                         .await;
@@ -450,7 +453,7 @@ impl SerialInterface {
     /// Try to send a message trough self.sender
     async fn send_message(&mut self, msg: SerialMessage) -> Result<(), SIError> {
         if let Some(sender) = self.sender.clone() {
-            log::info!("SerialInterface::Send {:?}", &msg);
+            log::debug!("SerialInterface::Send {:?}", &msg);
             sender
                 .send(msg)
                 .await
@@ -515,6 +518,7 @@ impl SerialInterface {
                         }
                         SerialMessage::SetBauds(bauds) => {
                             self.baud_rate = bauds;
+                            // TODO: update silence?
                             return Ok(None);
                         }
                         SerialMessage::SetCharSize(char_size) => {
@@ -578,8 +582,10 @@ impl SerialInterface {
     /// If receive a SerialMessage::Send(), pause listen in order to send message then resume listening.
     /// Stop listening if receive SerialMessage::SetMode(Stop). Almost SerialMessage are handled silently by self.read_message().
     pub async fn listen(&mut self) -> Result<Option<Mode>, SIError> {
+        
         loop {
             if let Some(silence) = &self.silence.clone() {
+                log::debug!("silence={:?}", silence);
                 self.status = Status::Read;
                 if let Some(msg) = self.read_until_silence(silence).await? {
                     match msg {
@@ -714,7 +720,7 @@ impl SerialInterface {
     /// Master loop
     async fn run_master(&mut self) -> Result<Option<Mode>, SIError> {
         loop {
-            sleep(Duration::from_nanos(2)).await;
+            // sleep(Duration::from_nanos(2)).await;
             match self.read_message().await {
                 Ok(msg) => {
                     if let Some(msg) = msg {
@@ -752,7 +758,7 @@ impl SerialInterface {
     /// Slave loop
     async fn run_slave(&mut self) -> Result<Option<Mode>, SIError> {
         loop {
-            sleep(Duration::from_nanos(2)).await;
+            // sleep(Duration::from_nanos(2)).await;
             match self.wait_for_request().await {
                 Ok(msg) => {
                     if let Some(SerialMessage::SetMode(Mode::Stop)) = msg {
@@ -770,7 +776,7 @@ impl SerialInterface {
     async fn run_sniff(&mut self) -> Result<Option<Mode>, SIError> {
         loop {
 
-            sleep(Duration::from_nanos(2)).await;
+            // sleep(Duration::from_nanos(2)).await;
             match self.listen().await {
                 Ok(msg) => {
                     if let Some(Mode::Stop) = msg {
@@ -789,8 +795,7 @@ impl SerialInterface {
     pub async fn start(&mut self) {
         log::info!("SerialInterface::run()");
         loop {
-            // FIXME: set duration
-            sleep(Duration::from_nanos(2)).await;
+            // sleep(Duration::from_nanos(1)).await;
             match &self.mode {
                 Mode::Stop => {
                     let result = self.read_message().await;
