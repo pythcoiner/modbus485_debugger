@@ -51,7 +51,7 @@ async fn main() {
             out.finish(format_args!("{}", formatted.color(color)))
         })
         .level(log::LevelFilter::Error)
-        .level_for("serial_interface", log::LevelFilter::Info)
+        .level_for("serial_interface", log::LevelFilter::Debug)
         .chain(std::io::stdout())
         .apply()
         .unwrap();

@@ -96,6 +96,7 @@ pub struct SerialInterface {
     timeout: Duration,
     receiver: Option<Receiver<SerialMessage>>,
     sender: Option<Sender<SerialMessage>>,
+    last_byte_time: Option<Instant>,
 }
 
 impl SerialInterface {
@@ -111,10 +112,11 @@ impl SerialInterface {
             stop_bits: StopBits::Stop2,
             flow_control: FlowControl::FlowNone,
             port: None,
-            silence: Some(Duration::from_nanos(10000)), // FIXME: what policy for init silence here?
+            silence: Some(Duration::from_nanos(15000000)), // FIXME: what policy for init silence here?
             timeout: Duration::from_nanos(10000), // FIXME: what policy for init timeout here?
             receiver: None,
             sender: None,
+            last_byte_time: None,
         })
     }
 
@@ -270,7 +272,10 @@ impl SerialInterface {
                 }
             };
             if l > 0 {
-                log::debug!("SerialInterface::read_byte({:?})", buffer);
+                let rcv_time = Instant::now();
+                let from_last = self.last_byte_time.map(|last_byte| rcv_time.duration_since(last_byte));
+                log::debug!("SerialInterface::read_byte({:?}, from last: {:?})", buffer, from_last);
+                self.last_byte_time = Some(rcv_time);
                 Ok(Some(buffer[0]))
             } else {
                 Ok(None)
@@ -301,8 +306,9 @@ impl SerialInterface {
         loop {
             // sleep(Duration::from_nanos(2)).await;
             let result = self.read_byte()?;
+            // receive data
             if let Some(data) = result {
-                log::debug!("Start receive data: {}", data);
+                // log::debug!("Start receive data: {}", data);
                 self.status = Status::Receipt;
                 buffer.push(data);
                 // reset the silence counter
@@ -322,31 +328,31 @@ impl SerialInterface {
                         };
                     }
                 }
+
             } else if let Some(silence) = silence {
+                // we not yet start receive
                 if buffer.is_empty() {
                     // Wait to receive first data
                     if let Some(msg) = self.read_message().await? {
                         return Ok(Some(msg));
                     }
                     last_data = Instant::now();
-                }
-                // wait for silence
-                let from_last_data = &Instant::now().duration_since(last_data);
-                if !buffer.is_empty() {
-                    log::debug!("Duration from last data: {:?}", from_last_data);
-                }
-                
-                if (from_last_data > silence) && !buffer.is_empty() {
-                    log::debug!("silence reached, data received: {:?}", buffer.to_vec());
-                    let result = self
-                        .send_message(SerialMessage::Receive(buffer.clone()))
-                        .await;
-                    self.status = Status::None;
-                    return if let Err(e) = result {
-                        Err(e)
-                    } else {
-                        Ok(None)
-                    };
+                } else {
+                    // receiving and waiting for silence
+                    let from_last_data = &Instant::now().duration_since(last_data);
+                    // log::debug!("Duration from last data: {:?}", from_last_data);
+                    if (from_last_data > silence){
+                        log::debug!("silence reached, data received: {:?}", buffer.to_vec());
+                        let result = self
+                            .send_message(SerialMessage::Receive(buffer.clone()))
+                            .await;
+                        self.status = Status::None;
+                        return if let Err(e) = result {
+                            Err(e)
+                        } else {
+                            Ok(None)
+                        };
+                    }
                 }
             }
             // check timeout
