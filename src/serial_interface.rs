@@ -106,13 +106,13 @@ impl SerialInterface {
             mode: Mode::Stop,
             status: Status::None,
             modbus_id: None,
-            baud_rate: BaudRate::Baud19200,
+            baud_rate: BaudRate::Baud115200,
             char_size: CharSize::Bits8,
             parity: Parity::ParityNone,
             stop_bits: StopBits::Stop2,
             flow_control: FlowControl::FlowNone,
             port: None,
-            silence: Some(Duration::from_nanos(15000000)), // FIXME: what policy for init silence here?
+            silence: Some(Duration::from_nanos(10000)), // FIXME: what policy for init silence here?
             timeout: Duration::from_nanos(10000), // FIXME: what policy for init timeout here?
             receiver: None,
             sender: None,
@@ -409,23 +409,6 @@ impl SerialInterface {
             .await
     }
 
-    /// Load port settings
-    fn set_port(&mut self) -> Result<(), SIError> {
-        let port_open = self.port.is_some();
-        if port_open {
-            self.port.as_mut().unwrap().reconfigure(&|settings| {
-                settings.set_baud_rate(self.baud_rate)?;
-                settings.set_char_size(self.char_size);
-                settings.set_parity(self.parity);
-                settings.set_stop_bits(self.stop_bits);
-                settings.set_flow_control(self.flow_control);
-                Ok(())
-            })
-            .unwrap();
-        }
-        Ok(())
-    }
-
     /// Open the serial port.
     pub fn open(&mut self) -> Result<(), SIError> {
         if self.port.is_some() || self.mode != Mode::Stop{
@@ -438,8 +421,15 @@ impl SerialInterface {
         } else if self.path.is_none() {
             Err(SIError::PathMissing)
         } else {
-            self.set_port()?;
             let mut port = serial::open(&self.path.as_ref().unwrap()).map_err(|e| SIError::CannotOpenPort(e.to_string()))?;
+            let settings = serial::PortSettings{
+                baud_rate: self.baud_rate,
+                char_size: self.char_size,
+                parity: self.parity,
+                stop_bits: self.stop_bits,
+                flow_control: self.flow_control,
+            };
+            port.configure(&settings).unwrap();
             port.set_timeout(Duration::from_nanos(10)).map_err(|_| SIError::CannotSetTimeout)?;
             self.port = Some(port);
             Ok(())
