@@ -1,4 +1,5 @@
 mod gui;
+mod utils;
 
 use crate::gui::Flags;
 use chrono::Local;

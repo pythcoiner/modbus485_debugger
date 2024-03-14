@@ -12,7 +12,7 @@ use iced_futures::subscription::{EventStream, Recipe};
 use serial_thread::serial::{Baud115200, Baud19200, Baud38400, Baud9600, BaudRate};
 use std::hash::Hash;
 use iced::theme::Button as BtnTheme;
-
+use crate::utils::compute_crc;
 
 
 pub const GREY: Color = Color {
@@ -214,7 +214,10 @@ impl Gui {
 
     fn send_request(&mut self) -> Result<(), GuiError>{
         let ret = Gui::str_to_data(self.request.clone());
-        if let Ok(data) = ret {
+        if let Ok(mut data) = ret {
+            if self.checksum {
+                data.append(&mut Vec::from(compute_crc(data.as_slice())));
+            }
             Gui::send_serial_message(self.sender.clone(), SerialMessage::Send(data));
             Ok(())
         } else {
@@ -372,7 +375,7 @@ impl Application for Gui {
             last_message: None,
             internal_error: None,
             daemon_mode: None,
-            checksum: false,
+            checksum: true,
         };
 
         gui.init();
@@ -381,7 +384,7 @@ impl Application for Gui {
     }
 
     fn title(&self) -> String {
-        "485 Sniffer".to_string()
+        "Modbus485 Sniffer".to_string()
     }
 
     fn update(&mut self, message: Message) -> Command<Message> {
@@ -412,6 +415,7 @@ impl Application for Gui {
                     return Gui::command(msg);
                 }
             }
+            #[allow(unreachable_patterns)]
             _ => {}
         }
 
