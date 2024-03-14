@@ -1,5 +1,5 @@
 [package]
-name = "serial_sniffer"
+name = "modbus485_debugger"
 version = "0.1.0"
 edition = "2021"
 
