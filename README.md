@@ -1,5 +1,5 @@
 ## Introduction
-Modbus485 Sniffer is a diagnostic tool designed for listening and interacting with RS485 lines using the 
+Modbus485 Debugger is a diagnostic tool designed for listening and interacting with RS485 lines using the 
 Modbus protocol. It enables users to manually send raw requests and monitor responses in a user-friendly 
 GUI environment. This tool is ideal for debugging and developing systems using RS485 serial communication.
 
