@@ -384,7 +384,7 @@ impl Application for Gui {
     }
 
     fn title(&self) -> String {
-        "Modbus485 Sniffer".to_string()
+        "Modbus485 Debugger".to_string()
     }
 
     fn update(&mut self, message: Message) -> Command<Message> {
