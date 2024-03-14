@@ -1,13 +1,12 @@
 mod gui;
-mod serial_interface;
 
 use crate::gui::Flags;
-use async_channel::unbounded;
 use chrono::Local;
 use colored::Colorize;
 use gui::Gui;
 use iced::{Application, Settings};
-use serial_interface::{SerialInterface, SerialMessage};
+use serial_thread::{SerialInterface, SerialMessage};
+use serial_thread::async_channel::unbounded;
 
 #[tokio::main]
 async fn main() {
@@ -51,7 +50,8 @@ async fn main() {
             out.finish(format_args!("{}", formatted.color(color)))
         })
         .level(log::LevelFilter::Error)
-        .level_for("serial_interface", log::LevelFilter::Debug)
+        .level_for("serial_thread", log::LevelFilter::Debug)
+        .level_for("serial_sniffer", log::LevelFilter::Debug)
         .chain(std::io::stdout())
         .apply()
         .unwrap();
@@ -69,7 +69,7 @@ async fn main() {
         receiver: gui_receiver,
     });
 
-    settings.window.size = (600, 400);
+    settings.window.size = (600, 900);
     settings.window.resizable = false;
 
     tokio::spawn(async move {

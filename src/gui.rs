@@ -2,14 +2,14 @@
 
 use std::fmt;
 use std::fmt::Formatter;
-use crate::serial_interface::{Mode, SerialMessage, Status};
-use async_channel::{Receiver, Sender};
+use serial_thread::{Mode, SerialMessage, Status};
+use serial_thread::async_channel::{Receiver, Sender};
 use futures::stream::{BoxStream, StreamExt};
 use iced::widget::{Button, button, Checkbox, Column, PickList, Row, Space, Text, TextInput};
 use iced::{executor, Application, Command, Element, Length, Theme, Color};
 use iced_futures::core::{Hasher};
 use iced_futures::subscription::{EventStream, Recipe};
-use serial::{Baud115200, Baud19200, Baud38400, Baud9600, BaudRate};
+use serial_thread::serial::{Baud115200, Baud19200, Baud38400, Baud9600, BaudRate};
 use std::hash::Hash;
 use iced::theme::Button as BtnTheme;
 
@@ -191,7 +191,7 @@ impl Gui {
 
     fn add_history(&mut self, entry: Entry) {
         self.history.push(entry);
-        if self.history.len() > 10 {
+        if self.history.len() > 30 {
             self.history.remove(0);
         }
     }

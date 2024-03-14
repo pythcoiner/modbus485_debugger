@@ -1418,9 +1418,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.20"
+version = "0.4.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5e6163cb8c49088c2c36f57875e58ccd8c87c7427f7fbd50ea6710b2f3f2e8f"
+checksum = "90ed8c1e510134f979dbc4f070f87d4313098b704861a105fe34231c70a3901c"
 
 [[package]]
 name = "lru"
@@ -2261,6 +2261,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serial-thread"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d78b8342fdd3f3988667ca25482b7e9a2ed97acd9b39703cf9f1918348564d37"
+dependencies = [
+ "async-channel",
+ "log",
+ "serial",
+ "serialport",
+ "tokio",
+]
+
+[[package]]
 name = "serial-unix"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2283,10 +2296,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "serial_interface"
+name = "serial_sniffer"
 version = "0.1.0"
 dependencies = [
- "async-channel",
  "chrono",
  "colored",
  "fern",
@@ -2297,7 +2309,7 @@ dependencies = [
  "iced_native",
  "iced_table",
  "log",
- "serial",
+ "serial-thread",
  "serialport",
  "tokio",
 ]
