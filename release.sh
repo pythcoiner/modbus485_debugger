@@ -45,7 +45,7 @@ gh release create "$TAG" \
   --repo "$REPO" \
   --title "$RELEASE_TITLE" \
   --notes "$RELEASE_NOTES" \
-  "$BUILD_DIR/$NAME$TAG-x86_64-linux-gnu"
-  "$BUILD_DIR/$NAME$TAG-x86_64-windows-gnu.exe"
+  "$BUILD_DIR/$NAME-$TAG-x86_64-linux-gnu" \
+  "$BUILD_DIR/$NAME-$TAG-x86_64-windows-gnu.exe"
 
 echo "Release $TAG created successfully"
