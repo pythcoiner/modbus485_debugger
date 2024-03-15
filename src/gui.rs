@@ -88,6 +88,7 @@ pub enum Message {
     ChecksumChecked(bool),
     SendClicked,
     ModbusDisplayChecked(bool),
+    ClearHistory,
 }
 
 #[derive(Debug)]
@@ -150,6 +151,10 @@ impl Gui {
 
     fn clear_request(&mut self) {
         self.request = "".to_string();
+    }
+    
+    fn clear_history(&mut self) {
+        self.history.clear();
     }
 
     fn process_input(&mut self, str: String) {
@@ -434,6 +439,7 @@ impl Application for Gui {
                 }
             }
             Message::ModbusDisplayChecked(checked) => { self.set_modbus_display(checked)}
+            Message::ClearHistory => {self.clear_history()}
             #[allow(unreachable_patterns)]
             _ => {}
         }
@@ -471,6 +477,9 @@ impl Application for Gui {
                 .push(Space::with_width(Length::Fixed(25.0)))
                 .push(Gui::button("History", None)
                     .width(Length::Fill))
+                .push(Space::with_width(Length::Fixed(5.0)))
+                .push(Gui::button("Clear", Some(Message::ClearHistory))
+                    .width(Length::Fixed(50.0)))
                 .push(Space::with_width(Length::Fixed(25.0)))
             )
             .push(Space::with_height(Length::Fixed(4.0)));
