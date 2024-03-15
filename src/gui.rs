@@ -284,9 +284,12 @@ impl Gui {
                         .style(BtnTheme::Destructive))
             }
             Entry::Send(data) => {
-                let s = self.data_to_str(data, "Sent:  ".to_string());
+                
+                let s = self.data_to_str(data.clone(), "Sent:  ".to_string());
+                let msg = data
+                    .map(|d| Message::SerialSend(SerialMessage::Send(d)));
                 Row::new()
-                    .push(Gui::button(&s, None)
+                    .push(Gui::button(&s, msg)
                         .width(Length::Fill)
                         .style(BtnTheme::Positive))
                     .push(Space::with_width(Length::Fixed(100.0)))
