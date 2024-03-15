@@ -51,8 +51,8 @@ async fn main() {
             out.finish(format_args!("{}", formatted.color(color)))
         })
         .level(log::LevelFilter::Error)
-        .level_for("serial_thread", log::LevelFilter::Debug)
-        .level_for("serial_sniffer", log::LevelFilter::Debug)
+        .level_for("serial_thread", log::LevelFilter::Info)
+        .level_for("modbus485_debugger", log::LevelFilter::Debug)
         .chain(std::io::stdout())
         .apply()
         .unwrap();
