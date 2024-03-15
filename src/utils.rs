@@ -21,6 +21,7 @@ pub fn compute_crc(data: &[u8]) -> [u8; 2] {
 use modbus_core::rtu::{extract_frame, request_pdu_len, response_pdu_len};
 use modbus_core::{Request, Response};
 
+#[allow(unused)]
 pub struct ModbusData<'a> {
     id: u8,
     raw_data: [u8;256],

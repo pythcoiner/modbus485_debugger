@@ -31,6 +31,7 @@ pub enum GuiError {
 
 impl fmt::Display for GuiError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        #[allow(clippy::match_single_binding)]
         match self {
             // TODO
             _ => {write!(f, "")}
@@ -86,6 +87,7 @@ pub enum Message {
     RequestInput(String),
     ChecksumChecked(bool),
     SendClicked,
+    ModbusDisplayChecked(bool),
 }
 
 #[derive(Debug)]
@@ -111,6 +113,7 @@ pub struct Gui {
     internal_error: Option<GuiError>,
     daemon_mode: Option<Mode>,
     checksum: bool,
+    modbus_display: bool,
 }
 
 impl Gui {
@@ -189,6 +192,10 @@ impl Gui {
     fn set_checksum(&mut self, checksum: bool) {
         self.checksum = checksum;
     }
+    
+    fn set_modbus_display(&mut self, display: bool) {
+        self.modbus_display = display;
+    }
 
     fn add_history(&mut self, entry: Entry) {
         self.history.push(entry);
@@ -240,11 +247,15 @@ impl Gui {
         }
     }
 
-    fn data_to_str(data: Option<Vec<u8>>, prefix: String) -> String {
+    fn data_to_str(&self, data: Option<Vec<u8>>, prefix: String) -> String {
         if let Some(data) = data {
             let raw_data = data.as_slice();
             let d = if let Some(d) = ModbusData::parse(raw_data).to_string() {
-                d
+                if self.modbus_display {
+                    d
+                } else {
+                    Gui::add_spaces(hex::encode(data.clone()))
+                }
             } else {
                 Gui::add_spaces(hex::encode(data.clone()))
             };
@@ -258,17 +269,17 @@ impl Gui {
         hex::decode(str).map_err(|_| GuiError::WrongRequestData)
     }
 
-    fn entry_to_row(entry: Entry) -> Row<'static, Message> {
+    fn entry_to_row(&self, entry: Entry) -> Row<'static, Message> {
         match entry {
             Entry::Receive(data) => {
                 Row::new()
                     .push(Space::with_width(Length::Fixed(100.0)))
-                    .push(Gui::button(&Gui::data_to_str(data, "Received:  ".to_string())[..], None)
+                    .push(Gui::button(&self.data_to_str(data, "Received:  ".to_string())[..], None)
                         .width(Length::Fill)
                         .style(BtnTheme::Destructive))
             }
             Entry::Send(data) => {
-                let s = Gui::data_to_str(data, "Sent:  ".to_string());
+                let s = self.data_to_str(data, "Sent:  ".to_string());
                 Row::new()
                     .push(Gui::button(&s, None)
                         .width(Length::Fill)
@@ -382,6 +393,7 @@ impl Application for Gui {
             internal_error: None,
             daemon_mode: None,
             checksum: true,
+            modbus_display: true,
         };
 
         gui.init();
@@ -421,6 +433,7 @@ impl Application for Gui {
                     return Gui::command(msg);
                 }
             }
+            Message::ModbusDisplayChecked(checked) => { self.set_modbus_display(checked)}
             #[allow(unreachable_patterns)]
             _ => {}
         }
@@ -462,7 +475,7 @@ impl Application for Gui {
             )
             .push(Space::with_height(Length::Fixed(4.0)));
         for entry in self.history.clone() {
-            history = history.push(Gui::entry_to_row(entry))
+            history = history.push(self.entry_to_row(entry))
                 .push(Space::with_height(Length::Fixed(2.0)))
         }
 
@@ -480,42 +493,57 @@ impl Application for Gui {
                     .size(10))
                 .push(Space::with_width(Length::Fixed(10.0)));
         }
+        
+        let first_row = Row::new()
+            .push(Text::new("Port:  "))
+            .push(
+                PickList::new(ports, self.port_selected.clone(), Message::PortSelected)
+                    .text_size(10),
+            )
+            .push(Gui::button("", Some(Message::ListPort)).width(Length::Fixed(23.0)))
+            .push(Space::with_width(Length::Fixed(100.0)))
+            .push(Text::new("Bauds:  "))
+            .push(
+                PickList::new(&self.baud_rates[..], self.baud_selected.clone(), Message::BaudSelected)
+                    .text_size(10),
+            )
+            .push(Space::with_width(Length::Fill))
+            .push(Gui::button(button_label, connect_msg));
+        
+        let second_row = Row::new()
+            .push(Text::new("Request:  "))
+            .push(TextInput::new("", &self.request)
+                .on_input(Message::RequestInput)
+                .on_submit(Message::SendClicked)
+                .size(12)
+            )
+            .push(Space::with_width(Length::Fixed(10.0)))
+            .push(Checkbox::new("checksum", self.checksum, Message::ChecksumChecked)
+                .size(15))
+            .push(Space::with_width(Length::Fixed(10.0)))
+            .push(Gui::button("Send", send_msg));
+        
+        let third_row = Row::new()
+            .push(Space::with_width(Length::Fixed(30.0)))
+            .push({
+                let label = if self.modbus_display {
+                    "Modbus"
+                } else {
+                    "Hex"
+                };
+                Checkbox::new(label, self.modbus_display, Message::ModbusDisplayChecked)
+            })
+            .push(Space::with_width(Length::Fill));
 
         let main_frame = Column::new()
             // First row
-            .push(
-                Row::new()
-                    .push(Text::new("Port:  "))
-                    .push(
-                        PickList::new(ports, self.port_selected.clone(), Message::PortSelected)
-                            .text_size(10),
-                    )
-                    .push(Gui::button("", Some(Message::ListPort)).width(Length::Fixed(23.0)))
-                    .push(Space::with_width(Length::Fixed(100.0)))
-                    .push(Text::new("Bauds:  "))
-                    .push(
-                        PickList::new(&self.baud_rates[..], self.baud_selected.clone(), Message::BaudSelected)
-                            .text_size(10),
-                    )
-                    .push(Space::with_width(Length::Fill))
-                    .push(Gui::button(button_label, connect_msg))
-            )
+            .push(first_row)
             .push(Space::with_height(Length::Fixed(8.0)))
             // Second row
-            .push(
-                Row::new()
-                    .push(Text::new("Request:  "))
-                    .push(TextInput::new("", &self.request)
-                        .on_input(Message::RequestInput)
-                        .on_submit(Message::SendClicked)
-                        .size(12)
-                        )
-                    .push(Space::with_width(Length::Fixed(10.0)))
-                    .push(Checkbox::new("checksum", self.checksum, Message::ChecksumChecked)
-                        .size(15))
-                    .push(Space::with_width(Length::Fixed(10.0)))
-                    .push(Gui::button("Send", send_msg))
-            )
+            .push(second_row)
+            .push(Space::with_height(Length::Fixed(10.0)))
+            // third row
+            .push(third_row)
             .push(Space::with_height(Length::Fixed(10.0)))
             .push(Row::new()
                 .push(history))
