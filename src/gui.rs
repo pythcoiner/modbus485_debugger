@@ -5,7 +5,7 @@ use std::fmt::Formatter;
 use serial_thread::{Mode, SerialMessage, Status};
 use serial_thread::async_channel::{Receiver, Sender};
 use futures::stream::{BoxStream, StreamExt};
-use iced::widget::{Button, button, Checkbox, Column, PickList, Row, Space, Text, TextInput};
+use iced::widget::{Button, Checkbox, Column, PickList, Row, Space, Text, TextInput};
 use iced::{executor, Application, Command, Element, Length, Theme, Color};
 use iced_futures::core::{Hasher};
 use iced_futures::subscription::{EventStream, Recipe};
@@ -13,6 +13,7 @@ use serial_thread::serial::{Baud115200, Baud19200, Baud38400, Baud9600, BaudRate
 use std::hash::Hash;
 use iced::theme::Button as BtnTheme;
 use crate::utils::compute_crc;
+use crate::utils::ModbusData;
 
 
 pub const GREY: Color = Color {
@@ -163,7 +164,7 @@ impl Gui {
             let last = without_spaces.chars().last();
             without_spaces.remove(without_spaces.len()-1);
             if let Some(c) = last {
-                if c.is_digit(16) {
+                if c.is_ascii_hexdigit() {
                     Some(c.to_string())
                 } else {
                     None
@@ -225,7 +226,7 @@ impl Gui {
         }
     }
 
-    fn handle_gui_error(&mut self, e: GuiError) -> Option<Message> {
+    fn handle_gui_error(&mut self, _e: GuiError) -> Option<Message> {
         // TODO
         None
     }
@@ -241,7 +242,12 @@ impl Gui {
 
     fn data_to_str(data: Option<Vec<u8>>, prefix: String) -> String {
         if let Some(data) = data {
-            let d = Gui::add_spaces(hex::encode(data.clone()));
+            let raw_data = data.as_slice();
+            let d = if let Some(d) = ModbusData::parse(raw_data).to_string() {
+                d
+            } else {
+                Gui::add_spaces(hex::encode(data.clone()))
+            };
             format!("{} {}", prefix, d)
         } else {
             "Error".to_string()

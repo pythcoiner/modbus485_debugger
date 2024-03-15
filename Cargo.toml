@@ -18,4 +18,5 @@ colored = "2.1.0"
 hex = "0.4.3"
 iced_table = "0.2.0"
 serial-thread = "0.0.4"
+modbus-core = { git = "https://github.com/pythcoiner/modbus-core.git", branch = "master" }
 
