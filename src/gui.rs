@@ -14,7 +14,7 @@ use std::hash::Hash;
 use iced::theme::Button as BtnTheme;
 use crate::utils::compute_crc;
 use crate::utils::ModbusData;
-
+use modbus_core::{Request, codec::Encode};
 
 pub const GREY: Color = Color {
     r: 0.125,
@@ -27,6 +27,7 @@ pub const GREY: Color = Color {
 #[derive(Debug, Clone)]
 pub enum GuiError {
     WrongRequestData,
+    WrongRequestDataLength,
 }
 
 impl fmt::Display for GuiError {
@@ -35,6 +36,77 @@ impl fmt::Display for GuiError {
         match self {
             // TODO
             _ => {write!(f, "")}
+        }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Raw {
+    data: String,
+}
+
+impl Raw {
+    fn new() -> Self {
+        Raw { data: "".to_string() }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Fn0x03 {
+    id: String,
+    start: String,
+    count: String,
+}
+
+impl Fn0x03 {
+    fn new() -> Self {
+        Fn0x03 { id: "".to_string(), start: "".to_string(),  count: "".to_string() }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Fn0x06 {
+    id: String,
+    register: String,
+    value: String,
+}
+
+impl Fn0x06 {
+    fn new() -> Self {
+        Fn0x06 { id: "".to_string(), register: "".to_string(),  value: "".to_string() }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Fn0x10 {
+    id: String,
+    start: String,
+    values: String,
+}
+
+impl Fn0x10 {
+    fn new() -> Self {
+        Fn0x10 { id: "".to_string(), start: "".to_string(),  values: "".to_string() }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum InputType {
+    Raw(Raw),
+    Fn0x03(Fn0x03),
+    Fn0x06(Fn0x06),
+    Fn0x10(Fn0x10),
+}
+
+impl fmt::Display for InputType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        #[allow(unreachable_patterns)]
+        match self {
+            InputType::Raw(_) => {write!(f, "Raw Bytes")}
+            InputType::Fn0x03(_) => {write!(f, "Fn0x03")}
+            InputType::Fn0x06(_) => {write!(f, "Fn0x06")}
+            InputType::Fn0x10(_) => {write!(f, "Fn0x10")}
+            _ => {write!(f, "?")}
         }
     }
 }
@@ -82,9 +154,13 @@ pub enum Message {
     SerialSend(SerialMessage),
     ListPort,
     PortSelected(String),
+    InputTypeSelected(String),
     BaudSelected(Baud),
     ConnectClicked,
-    RequestInput(String),
+    RawRequestInput(String),
+    Input0(String),
+    Input1(String),
+    Input2(String),
     ChecksumChecked(bool),
     SendClicked,
     ModbusDisplayChecked(bool),
@@ -115,6 +191,7 @@ pub struct Gui {
     daemon_mode: Option<Mode>,
     checksum: bool,
     modbus_display: bool,
+    input_type: InputType,
 }
 
 impl Gui {
@@ -149,23 +226,157 @@ impl Gui {
         self.last_message = Some(msg);
     }
 
-    fn clear_request(&mut self) {
-        self.request = "".to_string();
+    fn clear_raw_request(&mut self) {
+        if let InputType::Raw(raw) = &mut self.input_type {
+            raw.data = "".to_string();
+        }
     }
-    
+
     fn clear_history(&mut self) {
         self.history.clear();
     }
 
-    fn process_input(&mut self, str: String) {
-        // if char.len() == 1 {
-        //     let c = char.chars().next().unwrap();
-        //     if c.is_digit(16) {
-        //         self.request = format!("{}{}", self.request, char);
-        //     }
-        // } else {
-        //     //TODO: allow to paste hex string (w/ or w/o spaces)
-        // }
+    fn input_row(&self, send_msg: Option<Message>) -> Row<Message> {
+
+        let elements = vec![
+            InputType::Raw(Raw::new()).to_string(),
+            InputType::Fn0x03(Fn0x03::new()).to_string(),
+            InputType::Fn0x06(Fn0x06::new()).to_string(),
+            InputType::Fn0x10(Fn0x10::new()).to_string(),
+        ];
+
+        let dropdown: PickList<String, Message> = PickList::new(elements, Some(self.input_type.clone().to_string()), Message::InputTypeSelected)
+            .text_size(10)
+            .width(Length::Fixed(90.0));
+        
+        match &self.input_type {
+            InputType::Raw(raw) => {
+                Row::new()
+                    .push(dropdown)
+                    .push(Space::with_width(Length::Fixed(10.0)))
+
+                    .push(TextInput::new("", &raw.data)
+                        .on_input(Message::RawRequestInput)
+                        .on_submit(Message::SendClicked)
+                        .size(12)
+                    )
+                    .push(Space::with_width(Length::Fixed(10.0)))
+                    .push(Checkbox::new("checksum", self.checksum, Message::ChecksumChecked)
+                        .size(15))
+                    .push(Space::with_width(Length::Fixed(10.0)))
+                    .push(Gui::button("Send", send_msg))
+            }
+            InputType::Fn0x03(f) => {
+                Row::new()
+                    .push(dropdown)
+                    .push(Space::with_width(Length::Fixed(10.0)))
+
+                    .push(Text::new("Id(hex):  "))
+                    .push(TextInput::new("", &f.id)
+                        .on_input(Message::Input0)
+                        .on_submit(Message::SendClicked)
+                        .size(12)
+                        .width(Length::Fixed(50.0))
+                    )
+                    .push(Space::with_width(Length::Fixed(10.0)))
+
+                    .push(Text::new("Start(hex):  "))
+                    .push(TextInput::new("", &f.start)
+                        .on_input(Message::Input1)
+                        .on_submit(Message::SendClicked)
+                        .size(12)
+                        .width(Length::Fixed(50.0))
+                    )
+                    .push(Space::with_width(Length::Fixed(10.0)))
+
+                    .push(Text::new("Count(hex):  "))
+                    .push(TextInput::new("", &f.count)
+                        .on_input(Message::Input2)
+                        .on_submit(Message::SendClicked)
+                        .size(12)
+                        .width(Length::Fixed(50.0))
+                    )
+                    .push(Space::with_width(Length::Fill))
+
+                    .push(Gui::button("Send", send_msg))
+            }
+            InputType::Fn0x06(f) => {
+                Row::new()
+                    .push(dropdown)
+                    .push(Space::with_width(Length::Fixed(10.0)))
+
+                    .push(Text::new("Id(hex):  "))
+                    .push(TextInput::new("", &f.id)
+                        .on_input(Message::Input0)
+                        .on_submit(Message::SendClicked)
+                        .size(12)
+                        .width(Length::Fixed(50.0))
+                    )
+                    .push(Space::with_width(Length::Fixed(10.0)))
+
+                    .push(Text::new("Register(hex):  "))
+                    .push(TextInput::new("", &f.register)
+                        .on_input(Message::Input1)
+                        .on_submit(Message::SendClicked)
+                        .size(12)
+                        .width(Length::Fixed(50.0))
+                    )
+                    .push(Space::with_width(Length::Fixed(10.0)))
+
+                    .push(Text::new("Value(hex):  "))
+                    .push(TextInput::new("", &f.value)
+                        .on_input(Message::Input2)
+                        .on_submit(Message::SendClicked)
+                        .size(12)
+                        .width(Length::Fixed(50.0))
+                    )
+                    .push(Space::with_width(Length::Fill))
+
+                    .push(Gui::button("Send", send_msg))
+            }
+            InputType::Fn0x10(f) => {
+                Row::new()
+                    .push(dropdown)
+                    .push(Space::with_width(Length::Fixed(10.0)))
+
+                    .push(Text::new("Id(hex):  "))
+                    .push(TextInput::new("", &f.id)
+                        .on_input(Message::Input0)
+                        .on_submit(Message::SendClicked)
+                        .size(12)
+                        .width(Length::Fixed(50.0))
+                    )
+                    .push(Space::with_width(Length::Fixed(10.0)))
+
+                    .push(Text::new("Start(hex):  "))
+                    .push(TextInput::new("", &f.start)
+                        .on_input(Message::Input1)
+                        .on_submit(Message::SendClicked)
+                        .size(12)
+                        .width(Length::Fixed(50.0))
+                    )
+                    .push(Space::with_width(Length::Fixed(10.0)))
+
+                    .push(Text::new("Values(hex):  "))
+                    .push(TextInput::new("00,00ff,1234", &f.values)
+                        .on_input(Message::Input2)
+                        .on_submit(Message::SendClicked)
+                        .size(12)
+                        .width(Length::Fill)
+                    )
+                    .push(Space::with_width(Length::Fixed(10.0)))
+
+                    .push(Gui::button("Send", send_msg))
+            }
+            _ => {Row::new()}
+        }
+
+    }
+
+    fn process_input(str: String, mut len: Option<usize>) -> Option<String> {
+        //TODO: allow to paste hex string (w/ or w/o spaces)
+        
+        // remove spaces
         let mut without_spaces: String = str.chars().filter(|&c| c != ' ').collect();
 
         let last_char = if without_spaces.len() % 2 != 0 {
@@ -183,21 +394,31 @@ impl Gui {
         } else {
             None
         };
-
-        if Gui::str_to_data(without_spaces.clone()).is_ok() {
+        
+        let format_ok = if last_char.is_none() {
+            Gui::str_to_hex(&without_spaces.clone(), len)
+        } else if let Some(l) = len {
+            Gui::str_to_hex(&without_spaces.clone(), Some(l-1))
+        } else {
+            Gui::str_to_hex(&without_spaces.clone(), len)
+        };
+        
+        if format_ok.is_ok() {
             if let Some(c) = last_char {
                 without_spaces = format!("{}{}", without_spaces, c);
             }
             // FIXME: find a way to move the caret at end if we want to add spaces
             // self.request = Gui::add_spaces(without_spaces);
-            self.request = without_spaces;
+            Some(without_spaces)
+        } else {
+            None
         }
     }
 
     fn set_checksum(&mut self, checksum: bool) {
         self.checksum = checksum;
     }
-    
+
     fn set_modbus_display(&mut self, display: bool) {
         self.modbus_display = display;
     }
@@ -225,13 +446,89 @@ impl Gui {
             })
     }
 
-    fn send_request(&mut self) -> Result<(), GuiError>{
-        let ret = Gui::str_to_data(self.request.clone());
-        if let Ok(mut data) = ret {
-            if self.checksum {
-                data.append(&mut Vec::from(compute_crc(data.as_slice())));
+    // TODO: tests
+    fn build_request(&self) -> Option<SerialMessage> {
+        match self.input_type.clone() {
+            InputType::Raw(raw) => {
+                let ret = Gui::str_to_hex(&raw.data, None);
+                if let Ok(mut data) = ret {
+                    if self.checksum {
+                        data.append(&mut Vec::from(compute_crc(data.as_slice())));
+                    }
+                    Some(SerialMessage::Send(data))
+                } else {
+                    None
+                }
             }
-            Gui::send_serial_message(self.sender.clone(), SerialMessage::Send(data));
+            InputType::Fn0x03(f) => {
+                let id= Gui::u8_from_hex(&f.id);
+                let start = Gui::u16_from_hex(&f.start);
+                let count = Gui::u16_from_hex(&f.count);
+                if let (Ok(id), Ok(start), Ok(count)) = (id, start, count) {
+                    let bytes = &mut [0; 5].to_vec();
+                    if let Ok(_) = Request::ReadHoldingRegisters(start, count)
+                        .encode(bytes) {
+                        let mut data: Vec<u8> = Vec::new();
+                        data.push(id);
+                        data.append(bytes);
+                        data.append(&mut compute_crc(data.as_slice()).to_vec());
+                        return Some(SerialMessage::Send(data));
+                    }
+                }
+                None
+            }
+            InputType::Fn0x06(f) => {
+                let id= Gui::u8_from_hex(&f.id);
+                let register = Gui::u16_from_hex(&f.register);
+                let value = Gui::u16_from_hex(&f.value);
+                if let (Ok(id), Ok(register), Ok(value)) = (id, register, value) {
+                    let bytes = &mut [0; 5].to_vec();
+                    if let Ok(_) = Request::WriteSingleRegister(register, value)
+                        .encode(bytes) {
+                        let mut data: Vec<u8> = Vec::new();
+                        data.push(id);
+                        data.append(bytes);
+                        data.append(&mut compute_crc(data.as_slice()).to_vec());
+                        return Some(SerialMessage::Send(data));
+                    }
+                }
+                None
+            }
+            InputType::Fn0x10(f) => {
+                let id= Gui::u8_from_hex(&f.id);
+                let start = Gui::u16_from_hex(&f.start);
+                let values: Vec<u16> = f.values.split(',')
+                    .filter_map(|hex| {
+                        let ret = if let Ok(v) = u16::from_str_radix(hex, 16) {
+                            Some(v)
+                        } else {
+                            return None;
+                        };
+                        ret?;
+                        ret
+                    })
+                    .collect();
+                let mut values: Vec<u8> = values
+                    .iter()
+                    .flat_map(|word| {
+                        let v: Vec<u8> = vec![(word >> 8) as u8, (word & 0x00ff) as u8];
+                        v
+                    })
+                    .collect();
+                if let (Ok(id), Ok(start)) = (id, start) {
+                    let mut data: Vec<u8> = vec![id, 0x10, (start >> 8) as u8, (start & 0x00ff) as u8, 0x00, (values.len() / 2) as u8, values.len() as u8];
+                    data.append(&mut values);
+                    data.append(&mut compute_crc(data.as_slice()).to_vec());
+                    return Some(SerialMessage::Send(data));
+                }
+                None
+            }
+        }
+    }
+
+    fn send_request(&mut self) -> Result<(), GuiError>{
+        if let Some(msg) = self.build_request() {
+            Gui::send_serial_message(self.sender.clone(), msg);
             Ok(())
         } else {
             Err(GuiError::WrongRequestData)
@@ -270,8 +567,44 @@ impl Gui {
         }
     }
 
-    fn str_to_data(str: String) -> Result<Vec<u8>, GuiError> {
+    fn str_to_hex(str: &String, len: Option<usize>) -> Result<Vec<u8>, GuiError> {
+        if let Some(l) = len {
+            if str.len() > l {
+                return Err(GuiError::WrongRequestDataLength)
+            }
+        }
         hex::decode(str).map_err(|_| GuiError::WrongRequestData)
+    }
+    
+    fn u8_from_hex(mut str: &String) -> Result<u8, GuiError> {
+        let s = if str.len()%2 == 1 {
+            format!("{}{}", "0", str)
+        } else {
+            str.clone()
+        };
+        let data = hex::decode(s).map_err(|_| GuiError::WrongRequestData)?;
+        println!("data={:?}", data);
+        if data.len() != 1 {
+            Err(GuiError::WrongRequestDataLength)
+        } else {
+            Ok(data[0])
+        }
+    }
+
+    fn u16_from_hex(str: &String) -> Result<u16, GuiError> {
+        let s = if str.len()%2 == 1 {
+            format!("{}{}", "0", str)
+        } else {
+            str.clone()
+        };
+        let data = hex::decode(s).map_err(|_| GuiError::WrongRequestData)?;
+        if data.len() == 2 {
+            Ok((data[0] as u16) << 8  | data[1] as u16)
+        } else if data.len() == 1 {
+            Ok(data[0] as u16)
+        } else {
+            Err(GuiError::WrongRequestDataLength)
+        }
     }
 
     fn entry_to_row(&self, entry: Entry) -> Row<'static, Message> {
@@ -284,7 +617,7 @@ impl Gui {
                         .style(BtnTheme::Destructive))
             }
             Entry::Send(data) => {
-                
+
                 let s = self.data_to_str(data.clone(), "Sent:  ".to_string());
                 let msg = data
                     .map(|d| Message::SerialSend(SerialMessage::Send(d)));
@@ -319,13 +652,8 @@ impl Gui {
 
             },
             SerialMessage::Mode(mode) => self.daemon_mode = Some(mode),
-            SerialMessage::Send(data) => {
-                if let Ok(d)  = Gui::str_to_data(self.request.clone()) {
-                    if d == data {
-                        // Reset input field when send confirmation
-                        self.request = "".to_string();
-                    }
-                }
+            SerialMessage::Send(_data) => {
+                // TODO: should we do smth?
             }
             _ => {}
         }
@@ -396,12 +724,12 @@ impl Application for Gui {
             baud_selected: None,
             request: "".to_string(),
             history: Vec::new(),
-            // history: h,
             last_message: None,
             internal_error: None,
             daemon_mode: None,
             checksum: true,
             modbus_display: true,
+            input_type: InputType::Raw(Raw {data: "".to_string()})
         };
 
         gui.init();
@@ -423,9 +751,71 @@ impl Application for Gui {
                 Gui::send_serial_message(self.sender.clone(), msg);
             }
             Message::PortSelected(str) => {self.select_port(Some(str))}
+            Message::InputTypeSelected(s) => {
+                if s == InputType::Raw(Raw::new()).to_string() {
+                    self.input_type = InputType::Raw(Raw::new());
+                } else if s == InputType::Fn0x03(Fn0x03::new()).to_string() {
+                    self.input_type = InputType::Fn0x03(Fn0x03::new());
+                } else if s == InputType::Fn0x06(Fn0x06::new()).to_string() {
+                    self.input_type = InputType::Fn0x06(Fn0x06::new());
+                } else if s == InputType::Fn0x10(Fn0x10::new()).to_string() {
+                    self.input_type = InputType::Fn0x10(Fn0x10::new());
+                }
+
+            }
             Message::BaudSelected(b) => {self.select_bauds(b)}
             Message::ConnectClicked => {self.toggle_connect()}
-            Message::RequestInput(str) => {self.process_input(str)}
+            Message::RawRequestInput(str) => {
+                if let InputType::Raw(r) = &mut self.input_type {
+                    if let Some(data) =  Self::process_input(str, None) {
+                        r.data = data;
+                    }
+                }
+            }
+            Message::Input0(i) => {
+                if let InputType::Fn0x03(f) = &mut self.input_type {
+                    if let Some(data) =  Self::process_input(i, Some(2)) {
+                        f.id = data;
+                    }
+                } else if let InputType::Fn0x06(f) = &mut self.input_type {
+                    if let Some(data) =  Self::process_input(i, Some(2)) {
+                        f.id = data;
+                    }
+                } else if let InputType::Fn0x10(f) = &mut self.input_type {
+                    if let Some(data) =  Self::process_input(i, Some(2)) {
+                        f.id = data;
+                    }
+                }
+            }
+            Message::Input1(i) => {
+                if let InputType::Fn0x03(f) = &mut self.input_type {
+                    if let Some(data) =  Self::process_input(i, Some(4)) {
+                        f.start = data;
+                    }
+                } else if let InputType::Fn0x06(f) = &mut self.input_type {
+                    if let Some(data) =  Self::process_input(i, Some(4)) {
+                        f.register = data;
+                    }
+                } else if let InputType::Fn0x10(f) = &mut self.input_type {
+                    if let Some(data) =  Self::process_input(i, Some(4)) {
+                        f.start = data;
+                    }
+                }
+            }
+            Message::Input2(i) => {
+                if let InputType::Fn0x03(f) = &mut self.input_type {
+                    if let Some(data) =  Self::process_input(i, Some(4)) {
+                        f.count = data;
+                    }
+                } else if let InputType::Fn0x06(f) = &mut self.input_type {
+                    if let Some(data) =  Self::process_input(i, Some(4)) {
+                        f.value = data;
+                    }
+                } else if let InputType::Fn0x10(f) = &mut self.input_type {
+                    // TODO: implement check
+                    f.values = i;
+                }
+            }
             Message::ChecksumChecked(s) => {self.set_checksum(s)}
             Message::SendClicked => {
                 if self.daemon_connected {
@@ -505,13 +895,14 @@ impl Application for Gui {
                     .size(10))
                 .push(Space::with_width(Length::Fixed(10.0)));
         }
-        
+
         let first_row = Row::new()
             .push(Text::new("Port:  "))
             .push(
                 PickList::new(ports, self.port_selected.clone(), Message::PortSelected)
                     .text_size(10),
             )
+            .push(Space::with_width(Length::Fixed(10.0)))
             .push(Gui::button("", Some(Message::ListPort)).width(Length::Fixed(23.0)))
             .push(Space::with_width(Length::Fixed(100.0)))
             .push(Text::new("Bauds:  "))
@@ -521,20 +912,9 @@ impl Application for Gui {
             )
             .push(Space::with_width(Length::Fill))
             .push(Gui::button(button_label, connect_msg));
-        
-        let second_row = Row::new()
-            .push(Text::new("Request:  "))
-            .push(TextInput::new("", &self.request)
-                .on_input(Message::RequestInput)
-                .on_submit(Message::SendClicked)
-                .size(12)
-            )
-            .push(Space::with_width(Length::Fixed(10.0)))
-            .push(Checkbox::new("checksum", self.checksum, Message::ChecksumChecked)
-                .size(15))
-            .push(Space::with_width(Length::Fixed(10.0)))
-            .push(Gui::button("Send", send_msg));
-        
+
+        let second_row = self.input_row(send_msg);
+
         let third_row = Row::new()
             .push(Space::with_width(Length::Fixed(30.0)))
             .push({

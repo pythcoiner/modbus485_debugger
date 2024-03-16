@@ -53,26 +53,22 @@ impl<'a> ModbusData<'a> {
         }
     }
 
-    fn parse_request(data: &[u8]) -> Option<Request>{
-        if let Ok(Some(len)) = request_pdu_len(data) {
-            if let Ok(Some(frame)) = extract_frame(data, len) {
-                if let Ok(request) = Request::try_from(frame.pdu) {
-                    return Some(request);
-                };
-            }
-        };
-        None
+    pub fn parse_request(data: &[u8]) -> Option<Request>{
+        // TODO: control CRC
+        if let Ok(request) = Request::try_from(&data[1..data.len()-2]) {
+            Some(request)
+        } else {
+            None
+        }
     }
 
-    fn parse_response(data: &[u8]) -> Option<Response>{
-        if let Ok(Some(len)) = response_pdu_len(data) {
-            if let Ok(Some(frame)) = extract_frame(data, len) {
-                if let Ok(response) = Response::try_from(frame.pdu) {
-                    return Some(response);
-                };
-            }
-        };
-        None
+    pub fn parse_response(data: &[u8]) -> Option<Response>{
+        // TODO: control CRC
+        if let Ok(request) = Response::try_from(&data[1..data.len()-2]) {
+            Some(request)
+        } else {
+            None
+        }
     }
 
     pub fn to_string(&self) -> Option<String> {
