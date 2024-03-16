@@ -2,10 +2,11 @@
 
 # Variables
 REPO="pythcoiner/modbus485_debugger"
-TAG="v0.1.0"
+TAG="v0.1.1"
 NAME="modbus485_debugger"
 RELEASE_TITLE="Modbus485 Debugger $TAG"
-RELEASE_NOTES="Initial release"
+CHANGELOG_PATH="changelog.txt"
+RELEASE_NOTES=$(cat "$CHANGELOG_PATH")
 BUILD_DIR="build"
 
 # Ensure cargo is installed

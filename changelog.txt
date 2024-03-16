@@ -1,0 +1,4 @@
+- add a feature to display Readable modbus description of Response/Request that can be disable to display raw frame
+- add a clear history button
+- add a feature to re send a request by clicking on it
+- add a feature to input modbus 0x03, 0x06 and 0x10 function in a human readable form
