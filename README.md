@@ -46,6 +46,23 @@ All value should be fill w/ hex representation.
 Input modbus id, start register address, registers values.
 All value should be fill w/ hex representation.
 
+## Raw / Modbus display
+
+Requests and responses can be displayed in 2 representation, Modbus or raw hex frame.
+
+### Raw frame representation:
+
+![raw_display.png](assets%2Fraw_display.png)
+
+
+### Modbus representation
+
+![modbus_display.png](assets%2Fmodbus_display.png)
+
+## Re send a previous request:
+
+You can easily re-send a previous request by clicking on it.
+
 ## Contributing
 Contributions to Modbus485 are welcome. Please ensure that your code adheres to the existing style and structure 
 of the project. Submit a pull request with a clear description of the changes and improvements.
