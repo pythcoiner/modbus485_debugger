@@ -15,6 +15,37 @@ It has been tested only under linux but should work also under other Unix OS or 
 - **Error Display**: Visual feedback on incorrect or problematic requests.
 - **Checksum Calculation**: Automatic CRC computation for requests, that can be disabled.
 
+## Send request
+
+You can send 4 types of requests:
+
+### Raw request:
+
+![raw_request.png](assets%2Fraw_request.png)
+
+Input raw request in hex format, no spaces, checksum can be disabled.
+
+### Read Holding Register (Fn0x03)
+
+![fn0x03.png](assets%2Ffn0x03.png)
+
+Input modbus id, start register address, and register count.
+All value should be fill w/ hex representation.
+
+### Write Single Register (Fn0x06)
+
+![fn0x06.png](assets%2Ffn0x06.png)
+
+Input modbus id, register address, register value.
+All value should be fill w/ hex representation.
+
+### Write Multiple Registers (Fn0x10)
+
+![fn0x10.png](assets%2Ffn0x10.png)
+
+Input modbus id, start register address, registers values.
+All value should be fill w/ hex representation.
+
 ## Contributing
 Contributions to Modbus485 are welcome. Please ensure that your code adheres to the existing style and structure 
 of the project. Submit a pull request with a clear description of the changes and improvements.
