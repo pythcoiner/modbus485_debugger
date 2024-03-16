@@ -49,4 +49,12 @@ gh release create "$TAG" \
   "$BUILD_DIR/$NAME-$TAG-x86_64-linux-gnu" \
   "$BUILD_DIR/$NAME-$TAG-x86_64-windows-gnu.exe"
 
+# Create a GitLab release
+glab  release create "$TAG" \
+    --repo "rust/modbus485_debugger" \
+    --name "$RELEASE_TITLE" \
+    --notes "$RELEASE_NOTES" \
+    "$BUILD_DIR/$NAME-$TAG-x86_64-linux-gnu" \
+    "$BUILD_DIR/$NAME-$TAG-x86_64-windows-gnu.exe"
+
 echo "Release $TAG created successfully"
