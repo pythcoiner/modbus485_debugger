@@ -55,7 +55,9 @@ impl<'a> ModbusData<'a> {
 
     pub fn parse_request(data: &[u8]) -> Option<Request>{
         // TODO: control CRC
-        if let Ok(request) = Request::try_from(&data[1..data.len()-2]) {
+        if data.len() < 2 {
+            None
+        }else if let Ok(request) = Request::try_from(&data[1..data.len()-2]) {
             Some(request)
         } else {
             None
